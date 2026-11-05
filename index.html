@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ship Layout Optimizer</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header>
+    <h1>Ship Layout Optimizer</h1>
+    <p>Searches for room, lift, vent and armor layouts on a hull grid. Runs entirely in your browser.</p>
+  </header>
+
+  <main>
+    <section class="panel results">
+      <div class="toolbar">
+        <button id="startBtn" class="primary" disabled>Start search</button>
+        <button id="stopBtn" disabled>Stop</button>
+        <span id="status" class="status">Loading Python runtime...</span>
+      </div>
+      <div class="bar"><div id="barFill"></div></div>
+      <div id="progressText" class="muted"></div>
+      <div id="errorBox" class="error" hidden></div>
+
+      <div id="altTabs" class="tabs" hidden></div>
+      <div id="layoutWrap" hidden>
+        <div id="layoutSvg"></div>
+        <div id="legend" class="legend"></div>
+        <div class="toolbar">
+          <button id="dlJson">Download layout (JSON)</button>
+          <button id="dlSvg">Download picture (SVG)</button>
+          <button id="copyCoords">Copy coordinates</button>
+        </div>
+        <h3>Score <span id="scoreVal"></span></h3>
+        <div id="stats" class="stats"></div>
+        <h3>Room coordinates (top-left x, y)</h3>
+        <div class="tablewrap"><table id="inventory"></table></div>
+        <div id="oddsBox" class="muted"></div>
+      </div>
+      <p id="emptyMsg" class="muted">No layout yet. Adjust the settings and press Start.</p>
+    </section>
+
+    <aside class="panel settings">
+      <div class="toolbar"><h2>Settings</h2><button id="resetBtn" class="small">Reset to defaults</button></div>
+
+      <details open>
+        <summary>Hull</summary>
+        <p class="muted">One row per line. <code>x</code> = usable tile, <code>.</code> = outside the hull. All rows must be the same length.</p>
+        <textarea id="hull" rows="9" spellcheck="false"></textarea>
+        <div id="hullInfo" class="muted"></div>
+      </details>
+
+      <details open>
+        <summary>Rooms</summary>
+        <h4>Priority rooms (width, height, count)</h4>
+        <div id="priorityRooms" class="rows"></div>
+        <button class="small" data-add="priorityRooms">+ add</button>
+        <h4>Combat rooms (width, height, count)</h4>
+        <div id="combatRooms" class="rows"></div>
+        <button class="small" data-add="combatRooms">+ add</button>
+        <h4>Non-combat rooms (name, symbol, width, height, count)</h4>
+        <div id="noncombatRooms" class="rows"></div>
+        <button class="small" data-add="noncombatRooms">+ add</button>
+        <label class="inline"><input type="checkbox" id="placeBonus"> Fill leftover space with bonus rooms</label>
+      </details>
+
+      <details open>
+        <summary>Armor, lifts and vents</summary>
+        <div id="structure" class="grid2"></div>
+      </details>
+
+      <details>
+        <summary>Scoring weights</summary>
+        <p class="muted">Bigger number = that term matters more. Penalties are subtracted from the score.</p>
+        <div id="weights"></div>
+      </details>
+
+      <details open>
+        <summary>Search</summary>
+        <div id="search" class="grid2"></div>
+        <p class="muted">Leave restarts at 0 and use the time limit (or press Stop) to keep searching. Results improve with more restarts.</p>
+      </details>
+    </aside>
+  </main>
+
+  <footer class="muted">Python runs through <a href="https://pyodide.org">Pyodide</a> in a Web Worker. A browser uses one CPU core, so long searches are slower than the command-line version.</footer>
+
+  <script src="js/app.js"></script>
+</body>
+</html>
