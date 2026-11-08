@@ -23,6 +23,9 @@ ship-optimizer-site/
 To update the optimizer, replace `python/ship_layout_finder.py` with the new version and push.
 The driver only needs the `# ---- END CONFIG -` marker line and the config constant names to stay as they are.
 
+Hull rows may use `x` (usable), `r` (resource space, only resource rooms go there) and `.` (outside).
+The optional `--top50` and `--learn` (numpy) modes of the optimizer are command-line only and are not used by the web page.
+
 ## Run locally
 
 Browsers block `fetch` from `file://`, so serve the folder:

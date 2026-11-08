@@ -50,6 +50,14 @@ Score = weighted armor touchpoints (Shield + Reactors count PRIORITY_WEIGHT time
         - W_RUN    * empty horizontal run length beyond MAX_EMPTY_RUN
         - W_ISO    * non-combat rooms touching armor/lifts
         + W_SPREAD * average distance between priority rooms (capped)
+  With --top50 layouts.json (lessons learned from the top-50 ladder ships, see section 8 of the config):
+        + W_SHELL  * hull-edge contact, weighted per room kind by how top ships use the edge
+                     (non-combat rooms form the outer shell, combat rooms stay inside)
+        - W_NC_CLUSTER   * non-combat rooms that touch no other non-combat room
+        - W_LIFT_DENSITY * lifts outside the top-50 'hull width per lift column' band
+        and the armor sweet spots are set from how much armor top ships put around each room kind.
+
+    python3 ship_layout_optimizer_user.py --top50 layouts.json
 Pure Python 3, no dependencies.
 """
 import argparse
@@ -71,14 +79,22 @@ except ImportError:
 
 # ----------------------------------------------------------------- CONFIG ---
 DEFAULT_HULL = [
-    "..xxxxx............................",  # y0
-    "xxxxxxxxxxxx........xxxxxxxxxxxxx..",  # y1
-    "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",  # y2
-    "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",  # y3
-    "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",  # y4
-    "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",  # y5
-    "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.",  # y6
-    ".xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.",  # y7
+    "..................................................",  # y0
+    "..................................................",  # y1
+    ".........xxxx...xxxx...xxxx...xxxxxxxxxx..........",  # y2
+    ".........xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..........",  # y3
+    ".........xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..........",  # y4
+    ".........xxxx...xxxx...xxxx...xxxxxxxxxx..........",  # y5
+    ".........xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..........",  # y6
+    ".........xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..........",  # y7
+    ".........xxxx...xxxx...xxxx...xxxxxxxxxx..........",  # y8
+    ".........xxxx...xxxx...xxxx...xxxxxxxxxx..........",  # y9
+    ".........xxxx...xxxx...xxxx...xxxxxxxxxx..........",  # y10
+    ".........xxxx...xxxx...xxxx...xxxxxxxxxx..........",  # y11
+    ".........xxxx...xxxx...xxxx...xxxxxxxxxx..........",  # y12
+    ".........xxxx...xxxx...xxxx...xxxxxxxxxx..........",  # y13
+    "..................................................",  # y14
+    "..................................................",  # y15
 ]
 
 def _hull_from_cli(default):
@@ -93,24 +109,24 @@ def _hull_from_cli(default):
             with open(sys.argv[i + 1], "r", encoding="utf-8") as f:
                 rows = [line.strip() for line in f if line.strip() and not line.lstrip().startswith(";")]
     if rows is None:
-        return list(default)
-    rows = [row.strip() for row in rows if row.strip()]
-    if not rows or len({len(row) for row in rows}) != 1 or any(set(row) - {"x", "."} for row in rows):
-        raise SystemExit("Invalid hull: use equal-length rows containing only 'x' (inside) and '.' (outside).")
-    if not any("x" in row for row in rows):
+        return ["".join(r.split()) for r in default]
+    rows = ["".join(row.split()) for row in rows if row.strip()]        # tabs/spaces between tiles are ignored
+    if not rows or len({len(row) for row in rows}) != 1 or any(set(row) - {"x", ".", "r"} for row in rows):
+        raise SystemExit("Invalid hull: use equal-length rows containing only 'x' (inside), 'r' (resource space) and '.' (outside).")
+    if not any(("x" in row or "r" in row) for row in rows):
         raise SystemExit("Invalid hull: at least one 'x' tile is required.")
     return rows
 
 HULL = _hull_from_cli(DEFAULT_HULL)
 ARMOR_COUNT = 45
 MAX_EMPTY_RUN = 3
-LIFT_COST = 2           # extra cost per vertical step on a lift
+LIFT_COST = 1           # extra cost per vertical step on a lift
 VENT_COUNT = 8          # maximum number of vents (0 disables vents)
 VENT_LINK_COST = 1      # cost to step between a vent and the adjacent room (plus the drop to its floor)
 PRIORITY_WEIGHT = 3.0   # armor touchpoint weight for PRIORITY rooms (normal combat rooms = 1)
 PLACE_BONUS_ROOMS = True
 SA_SOURCES = 6          # preliminary scoring source count (full score uses all rooms)
-POPULATION_SIZE = 25
+POPULATION_SIZE = 12
 DEFAULT_STAGNATION = 20
 IMPROVEMENT_EPSILON = 0.1
 DUP_DISTANCE = 2        # layouts whose adjacency signatures differ by <= this count as duplicates
@@ -144,7 +160,7 @@ W_LIFT_BALANCE = 50.0          # Penalty when shortest-path traffic overuses one
 # Symbols: "P" priority rooms, or the size digit of a combat group ("2", "3", "4", "5").
 SIDE_PREF = {}                  # example: {"P": -1.0, "3": 1.0}
 W_SIDE = 4.0                    # score per room at full preference (scaled by how far toward that end it sits)
-W_LIFT_COUNT = 10.0            # Cost PER LIFT: the search only keeps a lift if it earns more than this
+W_LIFT_COUNT = 8.0            # Cost PER LIFT: the search only keeps a lift if it earns more than this
 MIN_LIFTS = 2                  # Fewest lift columns the search may use (set 1 to allow a single lift)
 MAX_LIFTS = 6                  # Most lift columns the search may use
 START_LIFTS = 2                # Lifts in the initial random layouts (the search adds/removes from here)
@@ -152,7 +168,7 @@ LIFT_COST = 2                  # Extra travel cost per vertical step on a lift
 
 # 4) Corridors, empty space, and room zoning
 W_GAP = 12.0                   # Cost per corridor tile reserved for walking
-W_EMPTY = 3.5                  # Penalty per unused interior hull tile outside corridors
+W_EMPTY = 6                  # Penalty per unused interior hull tile outside corridors
 W_RUN = 6.0                    # Penalty for horizontal empty runs longer than MAX_EMPTY_RUN
 W_ISO = 25.0                   # Penalty for undesirable mixing of non-combat and combat zones
 MAX_EMPTY_RUN = 3              # Longest horizontal empty run before W_RUN applies
@@ -161,17 +177,17 @@ MAX_EMPTY_RUN = 3              # Longest horizontal empty run before W_RUN appli
 W_SPREAD = 1.5                 # Reward for spacing priority systems apart (0 disables)
 SPREAD_CAP = 24.0              # Maximum average distance that earns spacing reward
 W_VENT = 15.0                  # Penalty per vent that fails to link two combat rooms
-VENT_COUNT = 3                 # Maximum vents (0 disables vents)
+VENT_COUNT = 8                 # Maximum vents (0 disables vents)
 VENT_LINK_COST = 1             # Cost to step between a vent and adjacent room / floor
 
 # 6) Search behavior (not score weights)
 ARMOR_COUNT = 45               # Number of armor tiles available
 PLACE_BONUS_ROOMS = True       # Automatically place bonus rooms
-SA_SOURCES = 6                 # Source count used by preliminary annealing scoring
-POPULATION_SIZE = 12           # Maximum number of diverse elite layouts retained
-DEFAULT_STAGNATION = 20        # Stop after this many batches without meaningful progress
-IMPROVEMENT_EPSILON = 0.1      # Minimum score gain counted as meaningful progress
-DUP_DISTANCE = 2                # Adjacency-signature distance used to identify duplicates
+SA_SOURCES = 12                 # Source count used by preliminary annealing scoring
+POPULATION_SIZE = 24           # Maximum number of diverse elite layouts retained
+DEFAULT_STAGNATION = 50        # Stop after this many batches without meaningful progress
+IMPROVEMENT_EPSILON = 0.01      # Minimum score gain counted as meaningful progress
+DUP_DISTANCE = 3                # Adjacency-signature distance used to identify duplicates
 
 CORNER_UNREACHABLE = 60.0   # travel time assumed for an unreachable corner pair
 
@@ -183,11 +199,23 @@ CORNER_UNREACHABLE = 60.0   # travel time assumed for an unreachable corner pair
 #    Use None instead of a range to switch the sweet spot off (more armor is then always better).
 #    These are the defaults for each kind of room; any single room group below can override them by
 #    adding a 4th item:  (width, height, count, (low, high))
-PRIORITY_ARMOR_RANGE = (4, 6)      # every PRIORITY room group (unless it gives its own range)
-COMBAT_ARMOR_RANGE = (2, 5)        # every normal combat room group (unless it gives its own range)
+PRIORITY_ARMOR_RANGE = (3, 6)      # every PRIORITY room group (unless it gives its own range)
+COMBAT_ARMOR_RANGE = (2, 6)        # every normal combat room group (unless it gives its own range)
 W_ARMOR_UNDER = 25.0               # penalty per armor tile a room is short of its low end
 PRIORITY_UNDER_MULT = 2.0          # ...times this for priority rooms
-W_ARMOR_OVER = 8.0                 # penalty per armor tile above a room's high end
+W_ARMOR_OVER = 2.0                 # penalty per armor tile above a room's high end
+
+# 8) Lessons from the top-50 ladder ships. Only active when a top-50 file is given
+#    (--top50 layouts.json on the command line, or set TOP50_FILE below). The file can be the
+#    layouts.json from pixyship_fetch_layouts.py; the numbers below are then measured from it.
+TOP50_FILE = None                  # e.g. "layouts.json"; the --top50 option overrides this
+TOP50_ARMOR_RANGES = False         # True: replace PRIORITY/COMBAT_ARMOR_RANGE with the top-50 armor-per-room
+                                   # range (top ships give priority rooms the same 2-4 tiles as other combat
+                                   # rooms; False keeps your own sweet spots and only reports the comparison)
+W_SHELL = 3.0                      # per hull-edge tile a room touches, times that room kind's learned edge
+                                   # preference (non-combat rooms on the edge are rewarded, combat penalized)
+W_NC_CLUSTER = 15.0                # penalty per non-combat room that touches no other non-combat room
+W_LIFT_DENSITY = 20.0              # penalty per lift outside the top-50 band of lifts for this hull's width
 
 # ---- ROOMS: (width, height, how_many[, (armor_low, armor_high)]) ----------------------------------------------
 # Priority combat rooms: armor is concentrated on these (e.g. Reactors + Shield).
@@ -196,10 +224,12 @@ PRIORITY_ROOMS = [
 ]
 # Normal combat rooms, by size.
 COMBAT_ROOMS = [
-    (2, 2, 6),      # Photon Phaser, Laser Phaser, Android Studio, Shield Battery
-    (3, 2, 6),      # 2x Mining Laser, Lab Combat Room, Plasma Discharger, Gas Defense System
-    (4, 2, 2),      # Freeze Ray
-    (5, 2, 0),      # Drone Hangar, Fighter Hangar
+    (2, 2, 4),      # 2x Photon Phaser Android Studio, Shield Battery
+    (3, 2, 6),      # 2x Mining Laser,2x Plasma Discharger, GDS, CLoak
+    (4, 2, 1),      # Freeze Ray
+    (4, 2, 1),      # Reactor
+    (3, 3, 1),      # ION
+    (5, 2, 2),      # Drone Hangar, Fighter Hangar
 ]
 # Non-combat rooms (kept away from armor/lifts). Fully customizable: add, remove or rename
 # categories freely. Each entry is (name, symbol, width, height, how_many).
@@ -210,8 +240,146 @@ NONCOMBAT_ROOMS = [
     # ("Cargo Bay", "C", 4, 2, 2),
     # ("Medbay", "M", 2, 2, 3),
 ]
+# Resource rooms (reactors, mines, storage ... anything that belongs in RESOURCE SPACE). Mark resource
+# space in the hull with 'r' (inside the hull, like 'x'). Rules:
+#   * ONLY resource rooms may be placed on 'r' tiles: every other room, lift, vent, armor and filler is
+#     kept off them
+#   * resource rooms are scored exactly like non-combat rooms (never attract armor, never walkable)
+#   * with RESOURCE_ANYWHERE = True they may also sit on ordinary 'x' tiles (never straddling both kinds);
+#     False confines them to 'r' space
+# Each entry is (name, symbol, width, height, how_many); symbols must be unused (not . # A L V x ~ P, digits...)
+RESOURCE_ROOMS = [
+    # ("Reactor", "R", 2, 2, 3),
+    # ("Storage", "S", 3, 2, 2),
+]
+RESOURCE_ANYWHERE = True
 BONUS_SIZE = (3, 2)     # filler rooms placed wherever they fit after the search
 # --------------------------------------------------------------- END CONFIG -
+
+# ------------------------------------------------------- top-50 priors ----
+# Room kinds in the PixyShip data, mapped onto this optimizer's three kinds of room.
+_T50_PRIORITY = {"Reactor", "Shield"}
+_T50_NONCOMBAT = {"Bedroom", "Storage", "Council", "Research", "Training", "Recycling", "Printer",
+                  "Gas", "Bridge", "Medical", "Reviver"}
+
+
+def _t50_kind(room_type):
+    if room_type in _T50_PRIORITY:
+        return "priority"
+    if room_type in _T50_NONCOMBAT:
+        return "noncombat"
+    if room_type in ("Armor", "Lift", "Corridor"):
+        return room_type.lower()
+    return "combat"
+
+
+def ring_of(x, y, w, h):
+    """Tiles orthogonally touching a w x h rectangle (corners excluded)."""
+    return ([(xx, y - 1) for xx in range(x, x + w)] + [(xx, y + h) for xx in range(x, x + w)]
+            + [(x - 1, yy) for yy in range(y, y + h)] + [(x + w, yy) for yy in range(y, y + h)])
+
+
+def _pct(values, q):
+    v = sorted(values)
+    return v[min(len(v) - 1, max(0, int(round(q * (len(v) - 1)))))]
+
+
+def top50_priors(layouts):
+    """Measure how top ladder ships arrange their hulls. Empty tiles next to a room count as the hull
+    edge (top ships are packed, so an unoccupied neighbour is almost always outside the hull)."""
+    kinds = ("priority", "combat", "noncombat")
+    armor = {k: [] for k in kinds}
+    edge = {k: [0, 0] for k in kinds}             # [edge tiles, perimeter tiles]
+    nc_touch, width_per_lift, armor_rooms = [], [], Counter()
+    for lay in layouts:
+        rooms = lay["rooms"]
+        rect = [(int(r["column"]), int(r["row"]), int(r["width"]), int(r["height"])) for r in rooms]
+        kind = [_t50_kind(r["type"]) for r in rooms]
+        occ = {}
+        for i, (x, y, w, h) in enumerate(rect):
+            for yy in range(y, y + h):
+                for xx in range(x, x + w):
+                    occ[(xx, yy)] = i
+        for i, (x, y, w, h) in enumerate(rect):
+            k = kind[i]
+            if k == "armor":
+                armor_rooms[min(3, len({occ[t] for t in ring_of(x, y, w, h)
+                                        if t in occ and kind[occ[t]] in ("priority", "combat")}))] += 1
+            if k not in armor:
+                continue
+            ring = ring_of(x, y, w, h)
+            armor[k].append(sum(1 for t in ring if t in occ and kind[occ[t]] == "armor"))
+            edge[k][0] += sum(1 for t in ring if t not in occ)
+            edge[k][1] += len(ring)
+            if k == "noncombat":
+                nc_touch.append(any(t in occ and occ[t] != i and kind[occ[t]] == "noncombat" for t in ring))
+        cols = {x for (x, _, _, _), k in zip(rect, kind) if k == "lift"}
+        if cols:
+            span = max(x + w for x, _, w, _ in rect) - min(x for x, _, _, _ in rect)
+            width_per_lift.append(span / len(cols))
+    if not width_per_lift or not all(armor.values()):
+        raise SystemExit("--top50: the file has too few rooms/lifts to learn from.")
+    overall = sum(e for e, _ in edge.values()) / sum(p for _, p in edge.values())
+    share = {k: e / p for k, (e, p) in edge.items()}
+    n_arm = sum(armor_rooms.values()) or 1
+    return {
+        "ships": len(layouts),
+        "armor_touch": {k: [_pct(v, 0.25), _pct(v, 0.5), _pct(v, 0.75)] for k, v in armor.items()},
+        "armor_range": {k: [max(1, _pct(armor[k], 0.25)), max(1, _pct(armor[k], 0.75))]
+                        for k in ("priority", "combat")},
+        "edge_share": share,
+        # log2(this kind's edge share / everyone's): + = top ships put this kind on the edge more than average
+        "edge_pref": {k: math.log2(max(share[k], 1e-3) / overall) for k in kinds},
+        "nc_cluster_share": sum(nc_touch) / len(nc_touch) if nc_touch else 1.0,
+        "width_per_lift": [_pct(width_per_lift, 0.25), _pct(width_per_lift, 0.5), _pct(width_per_lift, 0.75)],
+        "armor_shared_share": (armor_rooms[2] + armor_rooms[3]) / n_arm,
+    }
+
+
+def _top50_path():
+    for i, arg in enumerate(sys.argv):
+        if arg == "--top50" and i + 1 < len(sys.argv):
+            return sys.argv[i + 1]
+        if arg.startswith("--top50="):
+            return arg.split("=", 1)[1]
+    return TOP50_FILE
+
+
+def _load_top50(path):
+    """Priors from a PixyShip layouts.json (measured here) or a saved priors file. Read at import
+    time, like --hull, so worker processes get the same settings on every platform."""
+    if not path:
+        return None
+    cache = path + ".priors.json"
+    try:
+        if os.path.exists(cache) and os.path.getmtime(cache) >= os.path.getmtime(path):
+            with open(cache, encoding="utf-8") as f:
+                return json.load(f)
+    except (OSError, ValueError):
+        pass
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError) as e:
+        raise SystemExit(f"--top50: cannot read {path}: {e}")
+    if isinstance(data, dict) and "edge_pref" in data:
+        return data                                   # already a priors file
+    layouts = data.get("layouts") if isinstance(data, dict) else data
+    if not layouts:
+        raise SystemExit(f"--top50: {path} has no 'layouts' list (expected the layouts.json from the fetch script).")
+    pri = top50_priors(layouts)
+    try:                                              # cache, so worker processes skip the 12 MB parse
+        with open(cache, "w", encoding="utf-8") as f:
+            json.dump(pri, f, indent=1)
+    except OSError:
+        pass
+    return pri
+
+
+TOP50 = _load_top50(_top50_path())
+if TOP50 and TOP50_ARMOR_RANGES:
+    PRIORITY_ARMOR_RANGE = tuple(TOP50["armor_range"]["priority"])
+    COMBAT_ARMOR_RANGE = tuple(TOP50["armor_range"]["combat"])
 
 H, W = len(HULL), len(HULL[0])
 ROOMS = []  # (name, symbol, w, h, armor_weight, is_combat)
@@ -236,7 +404,7 @@ for kind, groups in (("Priority", PRIORITY_ROOMS), ("Combat", COMBAT_ROOMS)):
 NC = len(ROOMS)                       # combat rooms occupy indices 0..NC-1
 PRIORITY_IDX = [i for i, rm in enumerate(ROOMS) if rm[1] == "P"]
 
-_reserved_syms = set(SYMBOLS) | set(".#ALVx")
+_reserved_syms = set(SYMBOLS) | set(".#ALVx~")
 NONCOMBAT_SYMBOLS = {}
 for _n, _s, _w, _h, _c in NONCOMBAT_ROOMS:
     if len(_s) != 1 or _s in _reserved_syms or _s in NONCOMBAT_SYMBOLS:
@@ -244,6 +412,15 @@ for _n, _s, _w, _h, _c in NONCOMBAT_ROOMS:
                          f"(taken: {''.join(sorted(_reserved_syms | set(NONCOMBAT_SYMBOLS)))})")
     NONCOMBAT_SYMBOLS[_s] = _n
     for _i in range(_c):
+        ROOMS.append((f"{_n} #{_i + 1}", _s, _w, _h, 0.0, False))
+        ARMOR_RANGES.append(None)
+RES_IDX = set()
+for _n, _s, _w, _h, _c in RESOURCE_ROOMS:
+    if len(_s) != 1 or _s in _reserved_syms or _s in NONCOMBAT_SYMBOLS:
+        raise SystemExit(f"Resource room '{_n}': symbol '{_s}' is invalid or already in use")
+    NONCOMBAT_SYMBOLS[_s] = _n
+    for _i in range(_c):
+        RES_IDX.add(len(ROOMS))
         ROOMS.append((f"{_n} #{_i + 1}", _s, _w, _h, 0.0, False))
         ARMOR_RANGES.append(None)
 NR = len(ROOMS)
@@ -279,27 +456,53 @@ def _build_gain_tables():
 
 GAIN = _build_gain_tables()
 NEIGH = ((1, 0), (-1, 0), (0, 1), (0, -1))
-ALL_TILES = [(x, y) for y in range(H) for x in range(W) if HULL[y][x] == "x"]
+ALL_TILES = [(x, y) for y in range(H) for x in range(W) if HULL[y][x] in "xr"]      # every hull tile
+RES_TILES = {(x, y) for (x, y) in ALL_TILES if HULL[y][x] == "r"}      # resource space
+ROOM_KIND = ["priority" if r in PRIORITY_SET else ("combat" if r < NC else "noncombat") for r in range(NR)]
+NNC = NR - NC
+HULL_WIDTH = max(x for x, _ in ALL_TILES) - min(x for x, _ in ALL_TILES) + 1
+# Preferred number of lift columns for this hull, from the top-50 'hull width per lift' quartiles
+LIFT_BAND = (HULL_WIDTH / TOP50["width_per_lift"][2], HULL_WIDTH / TOP50["width_per_lift"][0]) if TOP50 else None
 OFFSETS = sorted(((dx, dy) for dx in range(-6, 7) for dy in range(-4, 5) if dx or dy),
                  key=lambda d: abs(d[0]) + abs(d[1]))
 
 
-OKG = [[c == "x" for c in row] for row in HULL]
-PS = [[0] * (W + 1) for _ in range(H + 1)]          # summed-area table of hull tiles
-for _y in range(H):
-    for _x in range(W):
-        PS[_y + 1][_x + 1] = PS[_y][_x + 1] + PS[_y + 1][_x] - PS[_y][_x] + (1 if OKG[_y][_x] else 0)
+OKG = [[c in "xr" for c in row] for row in HULL]
+PS = None
+def _sat(cell):
+    t = [[0] * (W + 1) for _ in range(H + 1)]
+    for _y in range(H):
+        for _x in range(W):
+            t[_y + 1][_x + 1] = t[_y][_x + 1] + t[_y + 1][_x] - t[_y][_x] + (1 if cell(_x, _y) else 0)
+    return t
+
+
+PS = _sat(lambda x, y: OKG[y][x])                      # summed-area table of hull tiles
+PR = _sat(lambda x, y: HULL[y][x] == "r")              # summed-area table of resource tiles
 
 
 def ok_tile(x, y):
     return 0 <= x < W and 0 <= y < H and OKG[y][x]
 
 
-def rect_ok(x, y, w, h):
-    """True if the whole w x h rectangle lies on hull tiles (O(1))."""
+def free_tile(x, y):
+    """Hull tile that is NOT resource space (lifts, vents, armor and filler live here)."""
+    return 0 <= x < W and 0 <= y < H and OKG[y][x] and (x, y) not in RES_TILES
+
+
+def rect_ok(x, y, w, h, r=None):
+    """True if the w x h rectangle lies on hull tiles AND respects resource space (O(1)): only resource
+    rooms (room index r in RES_IDX) may use 'r' tiles; they never straddle resource and ordinary tiles."""
     if x < 0 or y < 0 or x + w > W or y + h > H:
         return False
-    return PS[y + h][x + w] - PS[y][x + w] - PS[y + h][x] + PS[y][x] == w * h
+    if PS[y + h][x + w] - PS[y][x + w] - PS[y + h][x] + PS[y][x] != w * h:
+        return False
+    if not RES_TILES:
+        return True
+    n = PR[y + h][x + w] - PR[y][x + w] - PR[y + h][x] + PR[y][x]
+    if r is not None and r in RES_IDX:
+        return n == w * h or (n == 0 and RESOURCE_ANYWHERE)
+    return n == 0
 
 
 def clone(st):
@@ -312,7 +515,7 @@ def occupancy(state):
     tiles = {}
     for r, (x, y) in enumerate(state["pos"]):
         w, h = ROOMS[r][2], ROOMS[r][3]
-        if not rect_ok(x, y, w, h):
+        if not rect_ok(x, y, w, h, r):
             return None
         for yy in range(y, y + h):
             for xx in range(x, x + w):
@@ -323,13 +526,13 @@ def occupancy(state):
     for x, y0, y1 in state["lifts"]:
         for y in range(y0, y1 + 1):
             t = (x, y)
-            if not ok_tile(x, y) or t in tiles or t in lifts:
+            if not free_tile(x, y) or t in tiles or t in lifts:
                 return None
             lifts.add(t)
     vents = set()
     for x, y in state["vents"]:
         t = (x, y)
-        if not ok_tile(x, y) or t in tiles or t in lifts or t in vents:
+        if not free_tile(x, y) or t in tiles or t in lifts or t in vents:
             return None
         for dx in (-1, 0, 1):
             for dy in (-1, 0, 1):
@@ -580,7 +783,7 @@ def armor_pick(tiles, lifts, vents, reserved, noarmor):
             continue
         for dx, dy in NEIGH:
             t = (x + dx, y + dy)
-            if t not in occ and ok_tile(*t) and t not in reserved and t not in noarmor:
+            if t not in occ and free_tile(*t) and t not in reserved and t not in noarmor:
                 touch[t].append(r)
     cnt = defaultdict(int)
 
@@ -713,7 +916,7 @@ def init_state_decks(rng, deadline=None):
         floors, cap = pick_floors(rng, 1.15 + 0.4 * min(1.0, attempt / 400))
         if floors is None:
             return None
-        cols = [x for x in range(W) if all(ok_tile(x, y) for y in range(floors[0], floors[-1] + 1))]
+        cols = [x for x in range(W) if all(free_tile(x, y) for y in range(floors[0], floors[-1] + 1))]
         if len(cols) < START_LIFTS:
             continue
         lx = pick_lift_cols(rng, cols, START_LIFTS)
@@ -733,7 +936,7 @@ def init_state_decks(rng, deadline=None):
             for r in rows[d]:
                 w, h = ROOMS[r][2], ROOMS[r][3]
                 while x + w <= W:
-                    if (not shove and any(x <= L < x + w for L in lx)) or not rect_ok(x, floor - h + 1, w, h):
+                    if (not shove and any(x <= L < x + w for L in lx)) or not rect_ok(x, floor - h + 1, w, h, r):
                         x += 1
                     else:
                         break
@@ -760,12 +963,12 @@ def init_state_packed(rng, deadline=None):
     for _ in range(200):
         if deadline and time.time() > deadline:
             return None
-        order = sorted(range(NR), key=lambda r: -ROOMS[r][2] * ROOMS[r][3] + rng.random() * 3)
+        order = sorted(range(NR), key=lambda r: (r not in RES_IDX, -ROOMS[r][2] * ROOMS[r][3] + rng.random() * 3))   # resource rooms first: they have the fewest legal spots
         used, pos, okk = set(), [None] * NR, True
         for r in order:
             w, h = ROOMS[r][2], ROOMS[r][3]
             spots = [(x, y) for y in range(H - h, -1, -1) for x in range(W - w + 1)
-                     if rect_ok(x, y, w, h)
+                     if rect_ok(x, y, w, h, r)
                      and not any((xx, yy) in used for yy in range(y, y + h) for xx in range(x, x + w))]
             if not spots:
                 okk = False
@@ -828,7 +1031,7 @@ def legalize(s, anchors, rng, max_iter=60):
 
     def free_spot(r, x, y):
         w, h = ROOMS[r][2], ROOMS[r][3]
-        return rect_ok(x, y, w, h) and not any(
+        return rect_ok(x, y, w, h, r) and not any(
             (xx, yy) in fixed for yy in range(y, y + h) for xx in range(x, x + w))
 
     for _ in range(max_iter):
@@ -837,7 +1040,7 @@ def legalize(s, anchors, rng, max_iter=60):
         for r in range(NR):
             x, y = pos[r]
             w, h = ROOMS[r][2], ROOMS[r][3]
-            if not rect_ok(x, y, w, h):
+            if not rect_ok(x, y, w, h, r):
                 conflict = (r, None, None)
                 break
             for yy in range(y, y + h):
@@ -908,7 +1111,7 @@ def vent_gap_spots(s):
     for y in range(H):
         for x in range(1, W - 1):
             t = (x, y)
-            if t in blocked or not ok_tile(x, y):
+            if t in blocked or not free_tile(x, y):
                 continue
             a, b = owner.get((x - 1, y)), owner.get((x + 1, y))
             if (a is not None and b is not None and a != b and a < NC and b < NC
@@ -950,7 +1153,7 @@ def fit_lift(st, rng):
         a, b = sorted(rng.sample(rows, 2))
     cols = [x for x in range(W)
             if ((x - 1 in floors[a]) or (x + 1 in floors[a])) and ((x - 1 in floors[b]) or (x + 1 in floors[b]))
-            and all(ok_tile(x, y) and (x, y) not in tiles and (x, y) not in lift_tiles for y in range(a, b + 1))]
+            and all(free_tile(x, y) and (x, y) not in tiles and (x, y) not in lift_tiles for y in range(a, b + 1))]
     return (rng.choice(cols), a, b) if cols else None
 
 
@@ -1161,7 +1364,7 @@ def _crossover_once(a, b, rng):
     cand_v = [tuple(v) for v in a["vents"] if v[0] < cut] + [tuple(v) for v in b["vents"] if v[0] >= cut]
     rng.shuffle(cand_v)
     for v in cand_v:
-        if (len(vents) < VENT_COUNT and v not in lift_tiles and ok_tile(*v)
+        if (len(vents) < VENT_COUNT and v not in lift_tiles and free_tile(*v)
                 and not any(abs(v[0] - u[0]) <= 1 and abs(v[1] - u[1]) <= 1 for u in vents)):
             vents.append(v)
     s = dict(pos=pos, lifts=lifts, vents=vents)
@@ -1176,7 +1379,7 @@ def _crossover_once(a, b, rng):
             continue
         x, y0, y1 = t["lifts"][0]
         tl = {(x, y) for y in range(y0, y1 + 1)}
-        if used.isdisjoint(tl) and all(ok_tile(*q) for q in tl):
+        if used.isdisjoint(tl) and all(free_tile(*q) for q in tl):
             kept.append((x, y0, y1))
             used |= tl
     s = dict(pos=pos, lifts=kept, vents=vents)
@@ -1264,7 +1467,7 @@ def finalize(state):
     halo = noncombat_halo(tiles)
     top, _ = armor_pick(tiles, lifts, vents, reserved, halo)
     armor = [t for t, _ in top]
-    g = [["#" if c != "x" else "." for c in r] for r in HULL]
+    g = [["#" if c == "." else ("~" if c == "r" else ".") for c in r] for r in HULL]
     out = []
     for r, (x, y) in enumerate(pos):
         n, s, w, h, _, comb = ROOMS[r]
@@ -1465,6 +1668,24 @@ def finalize(state):
     vpen = vent_penalty(vl)
     unarmored_rooms = [r for r in range(NC) if touch[r] == 0]
     unarmored_priority = sum(1 for r in unarmored_rooms if r in PRIORITY_SET)
+    # Top-50 lessons: outer shell of non-combat rooms, non-combat rooms grouped, lifts spaced like top ships
+    shell = 0.0
+    nc_alone = 0
+    lift_density_pen = 0.0
+    edge_tiles, ring_tiles = Counter(), Counter()
+    if TOP50:
+        pref = TOP50["edge_pref"]
+        for r, (x, y) in enumerate(pos):
+            k = ROOM_KIND[r]
+            ring = ring_of(x, y, ROOMS[r][2], ROOMS[r][3])
+            e = sum(1 for t in ring if not ok_tile(*t))
+            edge_tiles[k] += e
+            ring_tiles[k] += len(ring)
+            shell += pref[k] * e
+            if k == "noncombat" and NNC > 1 and not any(tiles.get(t, -1) >= NC and tiles[t] != r for t in ring):
+                nc_alone += 1
+        nl = len(state["lifts"])
+        lift_density_pen = max(0.0, LIFT_BAND[0] - nl, nl - LIFT_BAND[1])
     score = (W_ARMOR * arm_sum - W_UNARMORED * len(unarmored_rooms)
              - W_PRIORITY_UNARMORED * unarmored_priority
              - W_ARMOR_UNDER * under_units - W_ARMOR_OVER * over_units
@@ -1473,14 +1694,19 @@ def finalize(state):
              - W_VENT * vpen - W_FLOAT * floating - W_CORNER * 0.5 * (cmax + cavg) + W_SPREAD * spread
              - W_EMPTY * empty_unused - W_LIFT_BALANCE * lift_balance_pen
              - W_LIFT_COUNT * len(state["lifts"])
-             + side_bonus)
+             + side_bonus
+             # top-50 style points only count once every combat room is reachable, so they never pull
+             # the search toward a layout with a cut-off room
+             + (W_SHELL * shell - W_NC_CLUSTER * nc_alone - W_LIFT_DENSITY * lift_density_pen if unreach == 0 else 0.0))
     info = dict(floating=floating, spread=spread, cmax=cmax, cavg=cavg, vent_pen=vpen, tiles=tiles, lifts=lifts, out=out,
                 armor=armor, long_extra=long_extra, iso=iso, avg=avg, arm_sum=arm_sum, unreach=unreach,
                 corridor=len(reserved), state=state, lift_pen=lift_penalty(state, tiles),
                 lift_touch_bad=lift_touch_bad, unarmored_rooms=len(unarmored_rooms),
                 unarmored_priority=unarmored_priority, empty_unused=empty_unused,
                 lift_usage=lift_usage, lift_balance_pen=lift_balance_pen,
-                touch=dict(touch), range_under=under_units, range_over=over_units)
+                touch=dict(touch), range_under=under_units, range_over=over_units,
+                shell=shell, nc_alone=nc_alone, lift_density_pen=lift_density_pen,
+                edge_tiles=dict(edge_tiles), ring_tiles=dict(ring_tiles))
     return score, g, info
 
 
@@ -2044,6 +2270,7 @@ def report(res, color=True):
         "P": "\033[41;97m",  # priority combat: red
         ".": "\033[100;97m", # empty space (not walkable): gray
         "#": "\033[90m",     # outside hull: dim
+        "~": "\033[44;97m",  # empty resource space: blue
     }
     reset = "\033[0m"
     # Extra non-combat categories each get their own color (cycled), distinct from combat blue.
@@ -2111,12 +2338,56 @@ def report(res, color=True):
         print(f"  Vent (1x1) -> {x}, {y}")
     ax = sorted(info["armor"], key=lambda t: (t[1], t[0]))
     print(f"  Armor ({len(ax)}): " + " ".join(f"({x},{y})" for x, y in ax))
+    if TOP50:
+        top50_report(info)
     key = dict(SYMBOLS)
     key.update(NONCOMBAT_SYMBOLS)
-    key.update({"x": "Bonus room", "A": "Armor", "L": "Lift", "V": "Vent", ".": "empty (not walkable)", "#": "outside hull"})
+    key.update({"x": "Bonus room", "A": "Armor", "L": "Lift", "V": "Vent", ".": "empty (not walkable)", "~": "empty resource space (resource rooms only)", "#": "outside hull"})
     print("\nLegend:")
     for symbol, meaning in key.items():
         print(f"  {cell(symbol)}  {symbol} = {meaning}")
+
+
+def top50_report(info):
+    """Side-by-side: this layout vs how the top-50 ladder ships arrange theirs."""
+    T, tiles = TOP50, info["tiles"]
+    touch = info.get("touch", {})
+
+    def med(v):
+        return _pct(v, 0.5) if v else 0
+    shared = sum(1 for (x, y) in info["armor"]
+                 if len({tiles[t] for t in ring_of(x, y, 1, 1) if t in tiles and tiles[t] < NC}) >= 2)
+    et, rt = info.get("edge_tiles", {}), info.get("ring_tiles", {})
+
+    def edge(k):
+        return f"{et.get(k, 0) / rt[k]:.0%}" if rt.get(k) else "-"
+    nl = len(info["state"]["lifts"])
+    rows = [
+        ("armor tiles around each priority room (median)", med([touch.get(r, 0) for r in PRIORITY_IDX]),
+         f"{T['armor_touch']['priority'][1]} (middle half {T['armor_touch']['priority'][0]}-{T['armor_touch']['priority'][2]})"),
+        ("armor tiles around each combat room (median)", med([touch.get(r, 0) for r in range(NC) if r not in PRIORITY_SET]),
+         f"{T['armor_touch']['combat'][1]} (middle half {T['armor_touch']['combat'][0]}-{T['armor_touch']['combat'][2]})"),
+        ("armor tiles shared by 2+ combat rooms", f"{shared / max(1, len(info['armor'])):.0%}",
+         f"{T['armor_shared_share']:.0%}"),
+        ("non-combat room perimeter on the hull edge", edge("noncombat"), f"{T['edge_share']['noncombat']:.0%}"),
+        ("combat room perimeter on the hull edge", edge("combat"), f"{T['edge_share']['combat']:.0%}"),
+        ("priority room perimeter on the hull edge", edge("priority"), f"{T['edge_share']['priority']:.0%}"),
+        ("  edge ratio non-combat / combat (fair across hulls)",
+         f"{(et.get('noncombat', 0) / rt['noncombat']) / max(1e-9, et.get('combat', 0) / rt['combat']):.1f}x"
+         if rt.get("noncombat") and rt.get("combat") and et.get("combat") else "-",
+         f"{T['edge_share']['noncombat'] / T['edge_share']['combat']:.1f}x"),
+        ("non-combat rooms touching another non-combat room",
+         f"{1 - info.get('nc_alone', 0) / NNC:.0%}" if NNC > 1 else "-", f"{T['nc_cluster_share']:.0%}"),
+        ("hull width per lift column", f"{HULL_WIDTH / nl:.1f}" if nl else "-",
+         f"{T['width_per_lift'][1]:.1f} (middle half {T['width_per_lift'][0]:.1f}-{T['width_per_lift'][2]:.1f})"),
+    ]
+    print(f"\nCompared with the top-{T['ships']} ladder ships:")
+    print(f"  {'':<52}{'this layout':>12}   top ships")
+    for label, mine, theirs in rows:
+        print(f"  {label:<52}{str(mine):>12}   {theirs}")
+    print(f"  top-50 terms in the score: shell {W_SHELL * info.get('shell', 0):+.1f} | "
+          f"lonely non-combat rooms {-W_NC_CLUSTER * info.get('nc_alone', 0):+.1f} | "
+          f"lift spacing {-W_LIFT_DENSITY * info.get('lift_density_pen', 0):+.1f}")
 
 
 def fmt_time(sec):
@@ -2299,6 +2570,8 @@ def main():
                     help="ignore an existing checkpoint instead of resuming from its saved population")
     ap.add_argument("--no-color", action="store_true",
                     help="disable terminal colors in the final layout grid")
+    ap.add_argument("--top50", default=None,
+                    help="layouts.json from pixyship_fetch_layouts.py: score layouts with lessons from top ladder ships")
     a = ap.parse_args()
 
     if (a.iters < 1 or a.polish < 0 or a.procs < 1 or a.restarts < 0
@@ -2321,6 +2594,14 @@ def main():
     population = []
 
     print(f"Hull: {W} x {H} | inside tiles: {len(ALL_TILES)} | armor target: {ARMOR_COUNT}", flush=True)
+    if TOP50:
+        ep = TOP50["edge_pref"]
+        src = "top-50" if TOP50_ARMOR_RANGES else "yours"
+        print(f"Top-50 lessons ON ({TOP50['ships']} ships): armor sweet spots ({src}) priority "
+              f"{PRIORITY_ARMOR_RANGE[0]}-{PRIORITY_ARMOR_RANGE[1]}, combat {COMBAT_ARMOR_RANGE[0]}-{COMBAT_ARMOR_RANGE[1]} | "
+              f"hull-edge preference non-combat {ep['noncombat']:+.2f}, combat {ep['combat']:+.2f}, "
+              f"priority {ep['priority']:+.2f} | preferred lifts for this {HULL_WIDTH}-wide hull "
+              f"{LIFT_BAND[0]:.1f}-{LIFT_BAND[1]:.1f}", flush=True)
     print("Continuous optimization enabled." if a.restarts == 0
           else f"Optimizing across {a.restarts} restarts.", flush=True)
     print(f"Workers: {a.procs} | full-score iterations/restart: {a.iters} | "

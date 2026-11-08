@@ -11,6 +11,7 @@ The original optimizer is NOT modified. It is configured through module-level co
 """
 import json
 import random
+import sys
 import time
 import types
 
@@ -21,7 +22,7 @@ INT_KEYS = {"ARMOR_COUNT", "MAX_EMPTY_RUN", "LIFT_COST", "VENT_COUNT", "VENT_LIN
 FLOAT_KEYS = {"PRIORITY_WEIGHT", "W_ARMOR", "W_UNARMORED", "W_PRIORITY_UNARMORED", "W_FLOAT",
               "W_TRAVEL", "W_CORNER", "W_DISC", "CORNER_UNREACHABLE", "W_LIFT", "W_LTOUCH",
               "W_LIFT_BALANCE", "W_LIFT_COUNT", "W_GAP", "W_EMPTY", "W_RUN", "W_ISO", "W_SPREAD",
-              "SPREAD_CAP", "W_VENT", "W_ARMOR_UNDER", "PRIORITY_UNDER_MULT", "W_ARMOR_OVER"}
+              "SPREAD_CAP", "W_VENT", "W_ARMOR_UNDER", "PRIORITY_UNDER_MULT", "W_ARMOR_OVER", "W_SIDE"}
 
 
 class _Stop(Exception):
@@ -48,9 +49,9 @@ def _rooms(lst, name, with_symbol=False):
 
 def build_injection(cfg):
     hull = [str(r).strip() for r in cfg["hull"] if str(r).strip()]
-    if not hull or len({len(r) for r in hull}) != 1 or any(set(r) - {"x", "."} for r in hull):
-        raise ValueError("Invalid hull: use equal-length rows containing only 'x' (inside) and '.' (outside).")
-    if not any("x" in r for r in hull):
+    if not hull or len({len(r) for r in hull}) != 1 or any(set(r) - {"x", ".", "r"} for r in hull):
+        raise ValueError("Invalid hull: use equal-length rows containing only 'x' (inside), 'r' (resource space) and '.' (outside).")
+    if not any("x" in r or "r" in r for r in hull):
         raise ValueError("Invalid hull: at least one 'x' tile is required.")
     lines = [f"HULL = {hull!r}"]
     for key, val in cfg.get("settings", {}).items():
@@ -68,6 +69,8 @@ def build_injection(cfg):
     lines.append(f"PRIORITY_ROOMS = {_rooms(cfg.get('priority_rooms', []), 'priority')!r}")
     lines.append(f"COMBAT_ROOMS = {_rooms(cfg.get('combat_rooms', []), 'combat')!r}")
     lines.append(f"NONCOMBAT_ROOMS = {_rooms(cfg.get('noncombat_rooms', []), 'noncombat', True)!r}")
+    lines.append(f"RESOURCE_ROOMS = {_rooms(cfg.get('resource_rooms', []), 'resource', True)!r}")
+    lines.append(f"RESOURCE_ANYWHERE = {bool(cfg.get('resource_anywhere', True))}")
     return "\n".join(lines)
 
 
@@ -79,6 +82,7 @@ def build_module(cfg, source_path):
     # multiprocessing is not available in the browser and the single-process driver never uses it
     src = src.replace("from multiprocessing import Pool, Value", "Pool = Value = None")
     src = src.replace(MARKER, build_injection(cfg) + "\n" + MARKER, 1)
+    sys.argv = ["ship_layout_finder.py"]     # the optimizer reads --hull/--top50 from argv at import time
     mod = types.ModuleType("ship_layout_finder")
     mod.__dict__["__file__"] = "ship_layout_finder.py"
     try:
@@ -106,6 +110,10 @@ def layout_json(m, res):
                           priority=r in m.PRIORITY_SET,
                           armor=touch.get(r, 0) if comb else None,
                           range=list(rg) if rg else None))
+    for rm in rooms[m.NC:]:
+        rm["resource"] = False
+    for r in getattr(m, "RES_IDX", ()):
+        rooms[r]["resource"] = True
     bonus = [dict(name=n, sym=s, w=w, h=h, x=x, y=y) for n, s, w, h, x, y, c in info["out"][m.NR:]]
     legend = dict(m.SYMBOLS)
     legend.update(m.NONCOMBAT_SYMBOLS)
@@ -122,7 +130,8 @@ def layout_json(m, res):
         priority_rooms_without_armor=info["unarmored_priority"],
         sweet_spot_shortfall=info["range_under"], sweet_spot_excess=info["range_over"],
     )
-    return dict(score=score, width=m.W, height=m.H, grid=["".join(row) for row in g],
+    res_tiles = sorted([list(t) for t in getattr(m, "RES_TILES", ())], key=lambda t: (t[1], t[0]))
+    return dict(score=score, width=m.W, height=m.H, resource_tiles=res_tiles, grid=["".join(row) for row in g],
                 rooms=rooms, bonus=bonus, lifts=[list(l) for l in st["lifts"]],
                 vents=[list(v) for v in st["vents"]], armor=sorted([list(t) for t in info["armor"]], key=lambda t: (t[1], t[0])),
                 legend=legend, stats=stats)

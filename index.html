@@ -46,7 +46,7 @@
 
       <details open>
         <summary>Hull</summary>
-        <p class="muted">One row per line. <code>x</code> = usable tile, <code>.</code> = outside the hull. All rows must be the same length.</p>
+        <p class="muted">One row per line. <code>x</code> = usable tile, <code>r</code> = resource space (only resource rooms go there), <code>.</code> = outside the hull. All rows must be the same length.</p>
         <textarea id="hull" rows="9" spellcheck="false"></textarea>
         <div id="hullInfo" class="muted"></div>
       </details>
@@ -62,6 +62,11 @@
         <h4>Non-combat rooms (name, symbol, width, height, count)</h4>
         <div id="noncombatRooms" class="rows"></div>
         <button class="small" data-add="noncombatRooms">+ add</button>
+        <h4>Resource rooms (name, symbol, width, height, count)</h4>
+        <p class="muted">Placed on <code>r</code> tiles in the hull. Scored like non-combat rooms.</p>
+        <div id="resourceRooms" class="rows"></div>
+        <button class="small" data-add="resourceRooms">+ add</button>
+        <label class="inline"><input type="checkbox" id="resAnywhere"> Resource rooms may also use normal <code>x</code> tiles</label>
         <label class="inline"><input type="checkbox" id="placeBonus"> Fill leftover space with bonus rooms</label>
       </details>
 
