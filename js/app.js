@@ -15,20 +15,22 @@ const DEFAULTS = {
   priority_rooms: [[3, 2, 4]],
   combat_rooms: [[2, 2, 6], [3, 2, 6], [4, 2, 2], [5, 2, 0]],
   noncombat_rooms: [["Bedroom", "X", 3, 2, 9]],
+  resource_rooms: [],
+  resource_anywhere: true,
   place_bonus_rooms: true,
-  priority_range: [4, 6],
-  combat_range: [2, 5],
+  priority_range: [3, 6],
+  combat_range: [2, 6],
   settings: {
-    ARMOR_COUNT: 45, MIN_LIFTS: 2, MAX_LIFTS: 6, START_LIFTS: 2, VENT_COUNT: 3,
+    ARMOR_COUNT: 45, MIN_LIFTS: 2, MAX_LIFTS: 6, START_LIFTS: 2, VENT_COUNT: 8,
     VENT_LINK_COST: 1, LIFT_COST: 2, MAX_EMPTY_RUN: 3,
     PRIORITY_WEIGHT: 3, W_ARMOR: 1, W_UNARMORED: 250, W_PRIORITY_UNARMORED: 500, W_FLOAT: 45,
-    W_ARMOR_UNDER: 25, PRIORITY_UNDER_MULT: 2, W_ARMOR_OVER: 8,
+    W_ARMOR_UNDER: 25, PRIORITY_UNDER_MULT: 2, W_ARMOR_OVER: 2,
     W_TRAVEL: 5, W_CORNER: 4, W_DISC: 500, CORNER_UNREACHABLE: 60,
-    W_LIFT: 35, W_LTOUCH: 25, W_LIFT_BALANCE: 50, W_LIFT_COUNT: 10,
-    W_GAP: 12, W_EMPTY: 3.5, W_RUN: 6, W_ISO: 25,
+    W_LIFT: 35, W_LTOUCH: 25, W_LIFT_BALANCE: 50, W_LIFT_COUNT: 8,
+    W_GAP: 12, W_EMPTY: 6, W_RUN: 6, W_ISO: 25,
     W_SPREAD: 1.5, SPREAD_CAP: 24, W_VENT: 15,
   },
-  search: { iters: 1200, polish: 300, restarts: 0, time_limit: 300, seed: 1, stagnation: 0, population: 12 },
+  search: { iters: 1200, polish: 300, restarts: 0, time_limit: 300, seed: 1, stagnation: 0, population: 24 },
 };
 
 const STRUCTURE_FIELDS = [
@@ -104,9 +106,9 @@ function buildHull() {
   const upd = () => {
     cfgState.hull = t.value; saveSettings();
     const rows = t.value.split("\n").map((r) => r.trim()).filter(Boolean);
-    const ok = rows.length && rows.every((r) => r.length === rows[0].length && /^[x.]+$/.test(r));
-    const tiles = rows.join("").split("x").length - 1;
-    $("hullInfo").textContent = ok ? `${rows[0].length} x ${rows.length}, ${tiles} usable tiles` : "Invalid: rows must be equal length and use only x and .";
+    const ok = rows.length && rows.every((r) => r.length === rows[0].length && /^[xr.]+$/.test(r));
+    const all = rows.join(""), tiles = all.split("x").length - 1, res = all.split("r").length - 1;
+    $("hullInfo").textContent = ok ? `${rows[0].length} x ${rows.length}, ${tiles + res} usable tiles` + (res ? ` (${res} resource space)` : "") : "Invalid: rows must be equal length and use only x, r and .";
   };
   t.addEventListener("input", upd); upd();
 }
@@ -137,6 +139,7 @@ const ROOM_TABLES = {
   priorityRooms: ["priority_rooms", [{ label: "width" }, { label: "height" }, { label: "count" }], [3, 2, 1]],
   combatRooms: ["combat_rooms", [{ label: "width" }, { label: "height" }, { label: "count" }], [2, 2, 1]],
   noncombatRooms: ["noncombat_rooms", [{ label: "name", text: true, flex: "3" }, { label: "symbol", text: true, max: 1, flex: "1" }, { label: "width" }, { label: "height" }, { label: "count" }], ["Cargo Bay", "C", 4, 2, 1]],
+  resourceRooms: ["resource_rooms", [{ label: "name", text: true, flex: "3" }, { label: "symbol", text: true, max: 1, flex: "1" }, { label: "width" }, { label: "height" }, { label: "count" }], ["Storage", "S", 3, 2, 1]],
 };
 function buildRooms() {
   for (const [id, [key, fields]] of Object.entries(ROOM_TABLES)) buildRoomRows(key, id, fields);
@@ -148,6 +151,8 @@ function buildRooms() {
   });
   $("placeBonus").checked = cfgState.place_bonus_rooms;
   $("placeBonus").onchange = (e) => { cfgState.place_bonus_rooms = e.target.checked; saveSettings(); };
+  $("resAnywhere").checked = cfgState.resource_anywhere;
+  $("resAnywhere").onchange = (e) => { cfgState.resource_anywhere = e.target.checked; saveSettings(); };
 }
 
 function buildGrid(containerId, fields, store, step) {
@@ -231,7 +236,8 @@ function buildConfig() {
     hull: rows, settings: cfgState.settings, priority_range: cfgState.priority_range,
     combat_range: cfgState.combat_range, place_bonus_rooms: cfgState.place_bonus_rooms,
     priority_rooms: cfgState.priority_rooms, combat_rooms: cfgState.combat_rooms,
-    noncombat_rooms: cfgState.noncombat_rooms, search: cfgState.search,
+    noncombat_rooms: cfgState.noncombat_rooms, resource_rooms: cfgState.resource_rooms,
+    resource_anywhere: cfgState.resource_anywhere, search: cfgState.search,
   };
 }
 function start() {
@@ -291,6 +297,7 @@ function layoutSvg(l) {
   l.grid.forEach((row, y) => [...row].forEach((c, x) => {
     if (c !== "#") p.push(`<rect x="${x * T}" y="${y * T}" width="${T}" height="${T}" fill="#2a3347" stroke="#1a2133" stroke-width="1"/>`);
   }));
+  (l.resource_tiles || []).forEach(([x, y]) => p.push(`<rect x="${x * T}" y="${y * T}" width="${T}" height="${T}" fill="#24406b" stroke="#1a2133" stroke-width="1"><title>Resource space ${x}, ${y}</title></rect>`));
   const rect = (r, fill, label, tip) => p.push(
     `<g><title>${tip}</title><rect x="${r.x * T + 1}" y="${r.y * T + 1}" width="${r.w * T - 2}" height="${r.h * T - 2}" rx="3" fill="${fill}" stroke="#0c111b" stroke-width="1.5"/>` +
     `<text x="${(r.x + r.w / 2) * T}" y="${(r.y + r.h / 2) * T + 5}" text-anchor="middle" fill="#fff" font-size="13" font-weight="600">${label}</text></g>`);
@@ -313,7 +320,7 @@ function renderLayout() {
   $("scoreVal").textContent = l.score.toFixed(1);
 
   const legend = $("legend"); legend.innerHTML = "";
-  const items = [["#e6b93c", "Armor"], ["#38c6d9", "Lift"], ["#f5f5f5", "Vent"], ["#3f9b57", "Bonus room"], ["#d94b4b", "Priority room (P)"]];
+  const items = [["#e6b93c", "Armor"], ...(l.resource_tiles && l.resource_tiles.length ? [["#24406b", "Resource space (r)"]] : []), ["#38c6d9", "Lift"], ["#f5f5f5", "Vent"], ["#3f9b57", "Bonus room"], ["#d94b4b", "Priority room (P)"]];
   Object.entries(l.legend).forEach(([sym, name]) => { if (sym !== "P") items.push([roomColor(sym, !/non|bed|cargo|med/i.test(name) && sym !== "X", false), `${sym} = ${name}`]); });
   items.forEach(([c, t]) => { const s = el("span"); s.innerHTML = `<i style="background:${c}"></i>`; s.append(t); legend.append(s); });
 
