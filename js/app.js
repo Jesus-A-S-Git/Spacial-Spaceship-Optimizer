@@ -113,6 +113,90 @@ function buildHull() {
   t.addEventListener("input", upd); upd();
 }
 
+// ---------------------------------------------------------------- ship hull picker (js/hulls.js)
+let shipPicked = null, shipActive = -1, hullBefore = null;
+function hullPreviewSvg(rows) {
+  const T = Math.max(4, Math.min(12, Math.floor(380 / rows[0].length)));
+  const p = [`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${rows[0].length * T} ${rows.length * T}" width="${rows[0].length * T}" height="${rows.length * T}">`];
+  rows.forEach((r, y) => [...r].forEach((c, x) => {
+    if (c !== ".") p.push(`<rect x="${x * T}" y="${y * T}" width="${T - 1}" height="${T - 1}" fill="${c === "r" ? "#24406b" : "#4a5a7a"}"/>`);
+  }));
+  p.push("</svg>");
+  return p.join("");
+}
+function shipShowResults() {
+  const box = $("shipResults"), q = $("shipSearch").value;
+  const hits = Hulls.search(q, 60);
+  box.innerHTML = "";
+  shipActive = -1;
+  box.hidden = !hits.length;
+  hits.forEach((s, i) => {
+    const b = el("button", { type: "button" }, document.createTextNode(s.name), el("span", { text: `${s.rows[0].length} x ${s.rows.length}, ${s.tiles} tiles` }));
+    b.onclick = () => shipSelect(s, i);
+    box.append(b);
+  });
+  const shown = hits.length, total = Hulls.count;
+  $("shipStatus").textContent = !total ? "" : q.trim()
+    ? (shown ? `${shown}${shown === 60 ? "+" : ""} matching ship${shown === 1 ? "" : "s"}. Click one to preview it.` : `No ship matches "${q.trim()}". Try part of the name.`)
+    : `${total} ships (${Hulls.source}). Type to filter, then click one.`;
+}
+function shipSelect(s, i) {
+  shipPicked = s;
+  [...$("shipResults").children].forEach((b, j) => b.classList.toggle("active", j === i));
+  shipActive = i;
+  $("shipPreview").hidden = false;
+  $("shipPreviewName").textContent = `${s.name} (${s.rows[0].length} x ${s.rows.length}, ${s.tiles} tiles)`;
+  $("shipPreviewSvg").innerHTML = hullPreviewSvg(s.rows);
+}
+async function shipEnsureLoaded(preferGame) {
+  if (Hulls.count && !preferGame) return true;
+  $("shipStatus").textContent = preferGame ? "Asking the game server for the newest ship list..." : "Loading ship list...";
+  try { await Hulls.load(preferGame); shipShowResults(); return true; }
+  catch (e) { $("shipStatus").textContent = e.message; return false; }
+}
+function buildShipFinder() {
+  const inp = $("shipSearch");
+  inp.addEventListener("focus", () => shipEnsureLoaded(false));
+  inp.addEventListener("input", async () => { if (await shipEnsureLoaded(false)) shipShowResults(); });
+  inp.addEventListener("keydown", (e) => {
+    const items = [...$("shipResults").children];
+    if (!items.length) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const i = Math.max(0, Math.min(items.length - 1, shipActive + (e.key === "ArrowDown" ? 1 : -1)));
+      items[i].click(); items[i].scrollIntoView({ block: "nearest" });
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (shipActive < 0) items[0].click(); else $("shipUse").click();
+    }
+  });
+  $("shipRefresh").onclick = () => shipEnsureLoaded(true);
+  $("shipFile").onchange = async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    try { await Hulls.loadFile(f); inp.value = ""; shipShowResults(); }
+    catch (err) { $("shipStatus").textContent = "Could not read that file: " + err.message; }
+    e.target.value = "";
+  };
+  $("shipUse").onclick = () => {
+    if (!shipPicked) return;
+    hullBefore = cfgState.hull;
+    const t = $("hull");
+    t.value = shipPicked.rows.join("\n");
+    t.dispatchEvent(new Event("input"));
+    $("hullUndo").hidden = false;
+    $("shipStatus").textContent = `Hull set to ${shipPicked.name}. Change some x to r below to mark resource space.`;
+  };
+  $("hullUndo").onclick = () => {
+    if (hullBefore == null) return;
+    const t = $("hull");
+    t.value = hullBefore; hullBefore = null;
+    t.dispatchEvent(new Event("input"));
+    $("hullUndo").hidden = true;
+    $("shipStatus").textContent = "Hull change undone.";
+  };
+}
+
 function buildRoomRows(key, containerId, fields) {
   const box = $(containerId);
   box.innerHTML = "";
@@ -379,4 +463,5 @@ $("copyCoords").onclick = async () => {
   catch (e) { $("status").textContent = "Copy blocked by the browser"; }
 };
 buildAll();
+buildShipFinder();
 newWorker();

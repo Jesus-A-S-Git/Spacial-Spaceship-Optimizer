@@ -53,3 +53,18 @@ table { border-collapse: collapse; width: 100%; font-size: 13px; }
 th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--border); }
 th { position: sticky; top: 0; background: var(--panel); }
 td.bad { color: #ffb86b; }
+.toolbar.tight { margin: 6px 0; }
+input[type=search] { flex: 1; min-width: 0; background: #0c111b; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; font: inherit; }
+input[type=search]:focus, textarea:focus, input:focus { outline: none; border-color: var(--accent); }
+.shipfind { background: var(--panel2); border-radius: 8px; padding: 8px 10px; margin: 6px 0 10px; }
+.shipfind h4 { margin-top: 2px; }
+.shiplist { max-height: 210px; overflow-y: auto; margin: 6px 0; border: 1px solid var(--border); border-radius: 6px; background: #0c111b; }
+.shiplist button { display: flex; justify-content: space-between; gap: 8px; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; padding: 6px 9px; }
+.shiplist button:last-child { border-bottom: 0; }
+.shiplist button:hover, .shiplist button.active { background: #1c3350; }
+.shiplist button span { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.shippreview { margin: 6px 0; }
+.shippreview svg { max-width: 100%; height: auto; display: block; background: #0c111b; border-radius: 6px; }
+.previewname { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+label.filebtn { display: inline-block; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 3px 8px; font-size: 12px; cursor: pointer; }
+label.filebtn:hover { border-color: var(--accent); }

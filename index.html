@@ -46,6 +46,28 @@
 
       <details open>
         <summary>Hull</summary>
+        <div class="shipfind">
+          <h4>Find a ship hull</h4>
+          <div class="toolbar tight">
+            <input type="search" id="shipSearch" placeholder="Type a ship name, e.g. Lv 9 or Federation" autocomplete="off">
+          </div>
+          <div id="shipStatus" class="muted">Start typing to load the ship list.</div>
+          <div id="shipResults" class="shiplist" hidden></div>
+          <div id="shipPreview" class="shippreview" hidden>
+            <div id="shipPreviewName" class="previewname"></div>
+            <div id="shipPreviewSvg"></div>
+            <div class="toolbar">
+              <button id="shipUse" class="primary small">Use this hull</button>
+              <span class="muted">Replaces the hull below. You can undo.</span>
+            </div>
+          </div>
+          <div class="toolbar tight">
+            <button id="shipRefresh" class="small" title="Ask the game server for the newest ship list">Get latest from game</button>
+            <label class="small filebtn" title="A ship list saved from the game API or Pixyship (.json or .xml)">Load file<input type="file" id="shipFile" accept=".json,.xml,.txt" hidden></label>
+            <button id="hullUndo" class="small" hidden>Undo hull change</button>
+          </div>
+        </div>
+        <h4>Hull grid</h4>
         <p class="muted">One row per line. <code>x</code> = usable tile, <code>r</code> = resource space (only resource rooms go there), <code>.</code> = outside the hull. All rows must be the same length.</p>
         <textarea id="hull" rows="9" spellcheck="false"></textarea>
         <div id="hullInfo" class="muted"></div>
@@ -91,6 +113,7 @@
 
   <footer class="muted">Python runs through <a href="https://pyodide.org">Pyodide</a> in a Web Worker. A browser uses one CPU core, so long searches are slower than the command-line version.</footer>
 
+  <script src="js/hulls.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>
