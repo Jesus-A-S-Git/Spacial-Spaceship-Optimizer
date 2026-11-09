@@ -85,11 +85,13 @@ optimizer learned:
   25% less armor value than top ships. The top-player style closes most of that gap (results on the Top 100
   page, re-measured weekly). Command line: `--style top` or `STYLE = "top"` (optimizer section 12).
 * **Walking** (*Armor, lifts and vents*): game-like walking, on by default. Crew walk through every room
-  (optimizer `WALK_NONCOMBAT`), and Service Vents follow the game (optimizer `VENT_GAME_LINKS`, section 13): a vent
-  links the rooms, vents and lifts it touches, needs something solid under it (armor goes under vents first:
-  "sandwiching"), and vents may touch. Measured on the top 100: with these rules the #1 ship is fully connected
-  through its 9 vents, and only 11% of top-player vents look pointless (43% if vents only linked sideways).
-  The command line keeps the original models unless you set them.
+  (optimizer `WALK_NONCOMBAT`), and Service Vents follow the game (optimizer `VENT_GAME_LINKS`, section 13, from the
+  Pixel Starships wiki): vents move crew sideways only, connect to a room only where they touch its bottom row, and
+  may sit side by side as a passage (a passage beside a lift connects to it). Vents that do not help are removed after
+  each search. With these rules the #1 ship is fully connected through its 9 vents.
+* **Connect every combat room** (*Armor, lifts and vents*, on by default; optimizer `CONNECT_ALL`, section 14): after
+  each search the optimizer adds the vent or lift that reconnects the most cut-off combat rooms, until all are
+  reachable (if the hull, vent count and lift count allow it).
 
 ## Ship hulls
 

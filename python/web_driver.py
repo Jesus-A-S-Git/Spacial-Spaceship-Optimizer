@@ -72,6 +72,7 @@ def build_injection(cfg):
     lines.append(f"PLACE_BONUS_ROOMS = {bool(cfg.get('place_bonus_rooms', True))}")
     lines.append(f"WALK_NONCOMBAT = {bool(cfg.get('walk_noncombat', False))}")
     lines.append(f"VENT_GAME_LINKS = {bool(cfg.get('vent_game_links', False))}")
+    lines.append(f"CONNECT_ALL = {bool(cfg.get('connect_all', False))}")
     if "rooms" in cfg:
         groups, meta = categorized_rooms(cfg["rooms"])
     else:                                       # older page: separate tables per kind
