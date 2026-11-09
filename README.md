@@ -34,7 +34,7 @@ ship-optimizer-site/
 │   ├── pixyship_fetch_layouts.py   fetches the top-100 ladder layouts from PixyShip
 │   ├── analyze_top.py           analyses them (patterns, priors)
 │   └── benchmark_top.py         measures how close the optimizer gets to real top ships (16 ships, 4 setups)
-├── .github/workflows/refresh-ships.yml   rebuilds all data weekly (ships, rooms, top 100)
+├── .github/workflows/refresh-ships.yml   rebuilds all data every two weeks (ships, rooms, top 100)
 ├── .nojekyll                    tells GitHub Pages to serve files as-is
 └── README.md
 ```
@@ -68,7 +68,7 @@ table lists the type. The anti-air pull is `CENTER_GROUPS` / `W_CENTER` (section
 
 ## Learning from the top 100
 
-Every Monday the **Refresh game data and top-100 layouts** Action fetches the top 100 ladder ships from
+On the 1st and 15th of every month the **Refresh game data and top-100 layouts** Action fetches the top 100 ladder ships from
 PixyShip and runs `tools/analyze_top.py` (run it by hand from the Actions tab any time). The **Top 100
 analysis** page shows the hulls they fly, their layouts, rooms per ship, armor and lifts, and what the
 optimizer learned:
@@ -85,7 +85,7 @@ optimizer learned:
   gives the optimizer the same hull, rooms and armor count as real top-100 ships and compares its best layout
   with theirs; the original weights value crew reaching every room so much that layouts end up with about
   25% less armor value than top ships. The top-player style closes most of that gap (results on the Top 100
-  page, re-measured weekly). Command line: `--style top` or `STYLE = "top"` (optimizer section 12).
+  page, re-measured every two weeks). Command line: `--style top` or `STYLE = "top"` (optimizer section 12).
 * **Walking** (*Armor, lifts and vents*): game-like walking, on by default. Crew walk through every room
   (optimizer `WALK_NONCOMBAT`), and Service Vents follow the game (optimizer `VENT_GAME_LINKS`, section 13, from the
   Pixel Starships wiki): vents move crew sideways only, connect to a room only where they touch its bottom row, and
@@ -117,7 +117,7 @@ arrow keys and Enter), check the preview and press **Use this hull**. **Undo hul
 Change some `x` to `r` afterwards if you want resource space.
 
 The list comes from `data/ships.json`. The **Refresh ship list** GitHub Action rebuilds it from the
-official game API every Monday; run it by hand once from the repo's **Actions** tab to create it the first time.
+official game API on the 1st and 15th of every month; run it by hand once from the repo's **Actions** tab to create it the first time.
 If the file is missing, the page tries the game API directly, and **Load file** accepts a saved ship list
 (.json or .xml, the same formats `grab_hull.py --source` reads).
 

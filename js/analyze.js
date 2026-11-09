@@ -148,7 +148,7 @@ const BENCH_NAMES = {
 };
 function benchmark(a) {
   const b = a.benchmark;
-  if (!b) { $("benchText").textContent = "No benchmark in this data yet (it runs with the weekly Action)."; return; }
+  if (!b) { $("benchText").textContent = "No benchmark in this data yet (it runs with the GitHub Action every two weeks)."; return; }
   const n = b.configs[0].ships;
   $("benchText").replaceChildren(
     el("p", { text: `${n} top-100 ships (even ranks): the optimizer got the same hull, the same rooms and the same armor count as the real ` +

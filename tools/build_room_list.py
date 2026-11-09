@@ -5,7 +5,7 @@
     python3 tools/build_room_list.py --source rooms.xml   # from a saved .json/.xml file
 
 The page uses it to fill in a room's real size and type when you type its name.
-The "Refresh ship and room lists" GitHub Action runs this every week and commits the result.
+The "Refresh ship and room lists" GitHub Action runs this every two weeks and commits the result.
 """
 import argparse, json, os, sys, time, urllib.parse
 from collections import Counter
