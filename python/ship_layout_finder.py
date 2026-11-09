@@ -236,6 +236,13 @@ TAG_ADJ = {}                       # {"laser|reactor": 0.8, ...}  two tags in al
 TAG_EDGE = {}                      # {"crew": 1.1, "reactor": -0.9, ...}  score at a fully edge-facing outline
 W_PATTERN = 0.0                    # strength of the learned patterns
 
+# 15) BOOSTERS only help the rooms they touch. ROOM_BOOSTS gives, per room (same order as ROOM_TAGS), the room
+#     tags that room boosts ([] for rooms that are not boosters). Measured on the top-100 ships: Gunnery Core
+#     sits by lasers and cannons, Missile Matrix by missile rooms, Flight Controller by hangars, Auxiliary
+#     Booster by any combat room. W_BOOST is earned for every boosted room touching a booster.
+ROOM_BOOSTS = []
+W_BOOST = 0.0
+
 # 11) Walking through non-combat rooms. In the game crew walk along the floor of EVERY room; this
 #     optimizer's original model only lets them use combat-room floors. True = game-like walking:
 #     bedrooms, storage etc. become walkable floor too (needed to score real top ships as connected).
@@ -978,6 +985,21 @@ def _room_tags():
 
 
 _TAGS = _room_tags()
+
+
+def boost_count(pos, tiles):
+    """Rooms touching a booster that the booster boosts (each booster/room pair counts once)."""
+    if not ROOM_BOOSTS or len(ROOM_BOOSTS) != NR:
+        return 0
+    tags = _TAGS
+    n = 0
+    for r, targets in enumerate(ROOM_BOOSTS):
+        if not targets:
+            continue
+        x, y = pos[r]
+        near = {tiles.get(t) for t in ring_of(x, y, ROOMS[r][2], ROOMS[r][3])}
+        n += sum(1 for o in near if o is not None and o != r and tags[o] in targets)
+    return n
 
 
 def pattern_score(pos, tiles):
@@ -1901,6 +1923,7 @@ def finalize(state):
     unarmored_priority = sum(1 for r in unarmored_rooms if r in PRIORITY_SET)
     center_dist = center_distance(pos)
     pattern = pattern_score(pos, tiles) if W_PATTERN else 0.0
+    boosted = boost_count(pos, tiles)
     # Top-50 lessons: outer shell of non-combat rooms, non-combat rooms grouped, lifts spaced like top ships
     shell = 0.0
     nc_alone = 0
@@ -1930,6 +1953,7 @@ def finalize(state):
              + side_bonus
              - W_CENTER * center_dist
              + W_PATTERN * pattern
+             + W_BOOST * boosted
              # top-50 style points only count once every combat room is reachable, so they never pull
              # the search toward a layout with a cut-off room
              + (W_SHELL * shell - W_NC_CLUSTER * nc_alone - W_LIFT_DENSITY * lift_density_pen if unreach == 0 else 0.0))
@@ -1942,7 +1966,8 @@ def finalize(state):
                 touch=dict(touch), range_under=under_units, range_over=over_units,
                 shell=shell, nc_alone=nc_alone, lift_density_pen=lift_density_pen,
                 edge_tiles=dict(edge_tiles), ring_tiles=dict(ring_tiles),
-                center_dist=center_dist, center_point=combat_center(pos), pattern=pattern)
+                center_dist=center_dist, center_point=combat_center(pos), pattern=pattern,
+                boosted=boosted)
     return score, g, info
 
 

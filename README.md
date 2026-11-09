@@ -54,7 +54,7 @@ optimizer treats it:
 | Kind | Types | Behaviour |
 |---|---|---|
 | Priority | Reactor, Shield generator, Other priority | gets the most armor |
-| Combat | Laser, Anti-air, Missile, Hangar, Utility, Other combat | armored, linked for crew travel; anti-air is also pulled to the middle of the other combat rooms |
+| Combat | Laser, Anti-air, Missile, Hangar, Anti-missile (engines, ship thrusters), Anti-teleport (teleport interdictors, repulsors, security gates, traps), Boarding (teleports), Crew support (android studios, med bays, revivers), Cloak & radar, Shield support (batteries, capacitors, overchargers), Command (command center, computer room, mainframe, bridge), Booster, Other utility, Other combat | armored, linked for crew travel; anti-air is also pulled to the middle of the other combat rooms; a booster earns points for every room it boosts that touches it (Gunnery Core: lasers and cannons, Missile Matrix: missile rooms, Flight Controller: hangars, Auxiliary Booster: any combat room; optimizer `ROOM_BOOSTS` / `W_BOOST`, section 15) |
 | Non-combat | Bedroom, Other non-combat | kept away from armor and lifts |
 | Resource | Resource | placed on `r` hull tiles |
 

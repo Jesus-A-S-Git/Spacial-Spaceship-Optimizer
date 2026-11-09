@@ -26,9 +26,9 @@ TYPE_CAT = {
     "Reactor": "reactor", "Shield": "shield",
     "Laser": "laser", "Cannon": "combat", "Missile": "missile", "StationMissile": "missile",
     "Carrier": "hangar", "AntiCraft": "antiair",
-    "Engine": "utility", "Android": "utility", "Stealth": "utility", "Teleport": "utility", "Medical": "utility",
-    "Command": "utility", "Bridge": "utility", "Trap": "utility", "Radar": "utility", "Booster": "utility",
-    "AntiTeleport": "utility", "Reviver": "utility",
+    "Engine": "antimissile", "AntiTeleport": "antitele", "Trap": "antitele", "Teleport": "boarding",
+    "Android": "crewsupport", "Medical": "crewsupport", "Reviver": "crewsupport", "Stealth": "cloak", "Radar": "cloak",
+    "Command": "command", "Bridge": "command", "Booster": "booster",
     "Bedroom": "crew", "Training": "noncombat", "Council": "noncombat", "Research": "noncombat",
     "Gas": "resource", "Mineral": "resource", "Storage": "resource", "Supply": "resource", "Printer": "resource",
     "Recycling": "resource",
@@ -36,6 +36,8 @@ TYPE_CAT = {
 STRUCT = {"Armor": "armor", "Lift": "lift", "Corridor": "corridor", "Wall": "armor"}
 CAT_KIND = {"reactor": "priority", "shield": "priority", "priority": "priority",
             "laser": "combat", "antiair": "combat", "missile": "combat", "hangar": "combat",
+            "antimissile": "combat", "antitele": "combat", "boarding": "combat", "crewsupport": "combat",
+            "cloak": "combat", "shieldsupport": "combat", "command": "combat", "booster": "combat",
             "utility": "combat", "combat": "combat", "crew": "noncombat", "noncombat": "noncombat",
             "resource": "resource"}
 KIND_ORDER = ["priority", "combat", "noncombat", "resource"]
@@ -46,7 +48,7 @@ def cat_for(rtype, name):
     if rtype in STRUCT:
         return STRUCT[rtype]
     if rtype == "Shield" and "generator" not in name.lower():
-        return "utility"
+        return "shieldsupport"
     return TYPE_CAT.get(rtype, "combat")
 
 

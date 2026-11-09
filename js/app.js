@@ -26,9 +26,9 @@ const DEFAULTS = {
     { name: "Hangar", cat: "hangar", w: 5, h: 2, count: 1, armor: "", short: "HAN" },
     { name: "Ion Cannon", cat: "combat", w: 3, h: 3, count: 1, armor: "", short: "ION" },
     { name: "Freeze Ray", cat: "combat", w: 4, h: 2, count: 1, armor: "" },
-    { name: "Android Studio", cat: "utility", w: 2, h: 2, count: 1, armor: "", short: "AS" },
-    { name: "Shield Battery", cat: "utility", w: 2, h: 2, count: 1, armor: "" },
-    { name: "Cloak Generator", cat: "utility", w: 3, h: 2, count: 1, armor: "", short: "CG" },
+    { name: "Android Studio", cat: "crewsupport", w: 2, h: 2, count: 1, armor: "", short: "AS" },
+    { name: "Shield Battery", cat: "shieldsupport", w: 2, h: 2, count: 1, armor: "" },
+    { name: "Cloak Generator", cat: "cloak", w: 3, h: 2, count: 1, armor: "", short: "CG" },
     { name: "Bedroom", cat: "crew", w: 3, h: 2, count: 9, armor: "", short: "BED" },
   ],
   resource_anywhere: true,
@@ -49,7 +49,7 @@ const DEFAULTS = {
     W_TRAVEL: 0.75, W_CORNER: 0.4, W_DISC: 30, CORNER_UNREACHABLE: 60,
     W_LIFT: 35, W_LTOUCH: 25, W_LIFT_BALANCE: 50, W_LIFT_COUNT: 18,
     W_GAP: 2.5, W_EMPTY: 6, W_RUN: 6, W_ISO: 25,
-    W_SPREAD: 1.5, SPREAD_CAP: 24, W_VENT: 15, W_CENTER: 3, W_PATTERN: 3, W_SHELL: 3, W_NC_CLUSTER: 15, W_LIFT_DENSITY: 20,
+    W_SPREAD: 1.5, SPREAD_CAP: 24, W_VENT: 15, W_CENTER: 3, W_BOOST: 20, W_PATTERN: 3, W_SHELL: 3, W_NC_CLUSTER: 15, W_LIFT_DENSITY: 20,
   },
   search: { iters: 1200, polish: 300, restarts: 0, time_limit: 300, seed: 1, stagnation: 0, population: 24, cores: 0 },
 };
@@ -84,8 +84,9 @@ const WEIGHT_GROUPS = [
     ["W_ISO", "Non-combat room touching armor/lift"]]],
   ["Priority spacing and vents", [
     ["W_SPREAD", "Priority room spacing reward"], ["SPREAD_CAP", "Spacing reward cap"], ["W_VENT", "Unlinked vent"]]],
-  ["Anti-air placement", [
-    ["W_CENTER", "Anti-air away from combat middle (per tile)"]]],
+  ["Anti-air and boosters", [
+    ["W_CENTER", "Anti-air away from combat middle (per tile)"],
+    ["W_BOOST", "Booster touching a room it boosts (reward per room)"]]],
   ["Learned from the top 100 (when enabled under Search)", [
     ["W_PATTERN", "Room neighbours / edge use like top ships"], ["W_SHELL", "Hull-edge use per room kind"],
     ["W_NC_CLUSTER", "Non-combat room not grouped"], ["W_LIFT_DENSITY", "Lift count outside top-100 range"]]],
@@ -759,6 +760,7 @@ function renderLayout() {
     ["Sweet-spot shortfall / excess", `${s.sweet_spot_shortfall.toFixed(0)} / ${s.sweet_spot_excess}`],
     ["Unused open tiles", s.unused_open_tiles], ["Priority spread", s.priority_spread.toFixed(1)],
   ];
+  if (s.boosted_rooms != null && l.rooms.some((r) => r.cat === "booster")) defs.push(["Rooms touching their booster", s.boosted_rooms]);
   if (s.center_rooms) defs.push([`Anti-air distance from combat middle (${s.center_rooms} room${s.center_rooms > 1 ? "s" : ""})`, `${s.center_distance.toFixed(1)} tiles`, s.center_distance / s.center_rooms > 4]);
   const sb = $("stats"); sb.innerHTML = "";
   defs.forEach(([k, v, warn]) => sb.append(el("div", { class: "stat" + (warn ? " warn" : "") }, el("b", { text: String(v) }), document.createTextNode(k))));
@@ -822,7 +824,14 @@ Promise.all([Hulls.load(false).catch(() => null), Top100.load()]).then(() => {
 GameRooms.load().then((n) => {
   if (!n) return;
   GameRooms.fillDatalist($("gameRoomNames"));
-  cfgState.rooms.forEach((r) => { const g = GameRooms.find(r.name); if (g && !r.short) r.short = g.short; });
+  cfgState.rooms.forEach((r) => {
+    const g = GameRooms.find(r.name);
+    if (!g) return;
+    if (!r.short) r.short = g.short;
+    // rooms saved before utility was split up: move game rooms still marked "utility" to their category
+    if (r.cat === "utility" && g.cat !== "utility" && CAT[g.cat]) r.cat = g.cat;
+  });
+  saveSettings();
   $("roomLibNote").textContent = `Type a room name to use one of ${n} game rooms (real size and type filled in automatically; list from ${GameRooms.updated}).`;
   buildRooms();
 });
