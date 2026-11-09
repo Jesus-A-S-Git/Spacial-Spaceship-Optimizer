@@ -40,7 +40,7 @@ const DEFAULTS = {
     W_TRAVEL: 5, W_CORNER: 4, W_DISC: 500, CORNER_UNREACHABLE: 60,
     W_LIFT: 35, W_LTOUCH: 25, W_LIFT_BALANCE: 50, W_LIFT_COUNT: 8,
     W_GAP: 12, W_EMPTY: 6, W_RUN: 6, W_ISO: 25,
-    W_SPREAD: 1.5, SPREAD_CAP: 24, W_VENT: 15,
+    W_SPREAD: 1.5, SPREAD_CAP: 24, W_VENT: 15, W_CENTER: 3,
   },
   search: { iters: 1200, polish: 300, restarts: 0, time_limit: 300, seed: 1, stagnation: 0, population: 24 },
 };
@@ -91,6 +91,8 @@ const WEIGHT_GROUPS = [
     ["W_ISO", "Non-combat room touching armor/lift"]]],
   ["Priority spacing and vents", [
     ["W_SPREAD", "Priority room spacing reward"], ["SPREAD_CAP", "Spacing reward cap"], ["W_VENT", "Unlinked vent"]]],
+  ["Anti-air placement", [
+    ["W_CENTER", "Anti-air away from combat middle (per tile)"]]],
 ];
 const SEARCH_FIELDS = [
   ["iters", "Annealing steps per restart"], ["polish", "Polish steps per restart"],
@@ -513,6 +515,11 @@ function layoutSvg(l) {
   l.armor.forEach(([x, y]) => p.push(`<rect x="${x * T + 2}" y="${y * T + 2}" width="${T - 4}" height="${T - 4}" fill="#e6b93c"><title>Armor ${x}, ${y}</title></rect>`));
   l.lifts.forEach(([x, y0, y1]) => p.push(`<rect x="${x * T + 3}" y="${y0 * T}" width="${T - 6}" height="${(y1 - y0 + 1) * T}" fill="#38c6d9"><title>Lift x=${x}, y ${y0}-${y1}</title></rect>`));
   l.vents.forEach(([x, y]) => p.push(`<rect x="${x * T + 4}" y="${y * T + 4}" width="${T - 8}" height="${T - 8}" fill="#f5f5f5"><title>Vent ${x}, ${y}</title></rect>`));
+  if (l.combat_center) {
+    const [cx, cy] = [l.combat_center[0] * T, l.combat_center[1] * T];
+    p.push(`<g stroke="#ffffff" stroke-width="2.5"><title>Middle of the combat rooms (anti-air target)</title>` +
+      `<circle cx="${cx}" cy="${cy}" r="8" fill="#0c111b" fill-opacity=".55"/><line x1="${cx - 11}" y1="${cy}" x2="${cx + 11}" y2="${cy}"/><line x1="${cx}" y1="${cy - 11}" x2="${cx}" y2="${cy + 11}"/></g>`);
+  }
   p.push("</svg>");
   return p.join("");
 }
@@ -528,6 +535,7 @@ function renderLayout() {
   const seen = new Map();
   l.rooms.forEach((r) => { const key = r.cat || (r.priority ? "reactor" : r.combat ? "combat" : "noncombat"); seen.set(key, (seen.get(key) || 0) + 1); });
   ROOM_CATEGORIES.forEach((c) => { if (seen.has(c.id)) items.push([c.color, `${c.label} (${seen.get(c.id)})`]); });
+  if (l.combat_center) items.push(["transparent", "\u2316 combat middle (anti-air target)"]);
   items.push(["#e6b93c", "Armor"], ["#38c6d9", "Lift"], ["#f5f5f5", "Vent"], ["#3f9b57", "Bonus room"]);
   if (l.resource_tiles && l.resource_tiles.length) items.push(["#24406b", "Resource space (r)"]);
   items.forEach(([c, t]) => { const s = el("span"); s.innerHTML = `<i style="background:${c}"></i>`; s.append(t); legend.append(s); });
@@ -544,6 +552,7 @@ function renderLayout() {
     ["Sweet-spot shortfall / excess", `${s.sweet_spot_shortfall.toFixed(0)} / ${s.sweet_spot_excess}`],
     ["Unused open tiles", s.unused_open_tiles], ["Priority spread", s.priority_spread.toFixed(1)],
   ];
+  if (s.center_rooms) defs.push([`Anti-air distance from combat middle (${s.center_rooms} room${s.center_rooms > 1 ? "s" : ""})`, `${s.center_distance.toFixed(1)} tiles`, s.center_distance / s.center_rooms > 4]);
   const sb = $("stats"); sb.innerHTML = "";
   defs.forEach(([k, v, warn]) => sb.append(el("div", { class: "stat" + (warn ? " warn" : "") }, el("b", { text: String(v) }), document.createTextNode(k))));
 

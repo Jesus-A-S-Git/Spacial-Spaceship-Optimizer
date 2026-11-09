@@ -22,7 +22,9 @@ INT_KEYS = {"ARMOR_COUNT", "MAX_EMPTY_RUN", "LIFT_COST", "VENT_COUNT", "VENT_LIN
 FLOAT_KEYS = {"PRIORITY_WEIGHT", "W_ARMOR", "W_UNARMORED", "W_PRIORITY_UNARMORED", "W_FLOAT",
               "W_TRAVEL", "W_CORNER", "W_DISC", "CORNER_UNREACHABLE", "W_LIFT", "W_LTOUCH",
               "W_LIFT_BALANCE", "W_LIFT_COUNT", "W_GAP", "W_EMPTY", "W_RUN", "W_ISO", "W_SPREAD",
-              "SPREAD_CAP", "W_VENT", "W_ARMOR_UNDER", "PRIORITY_UNDER_MULT", "W_ARMOR_OVER", "W_SIDE"}
+              "SPREAD_CAP", "W_VENT", "W_ARMOR_UNDER", "PRIORITY_UNDER_MULT", "W_ARMOR_OVER", "W_SIDE", "W_CENTER"}
+# room types the optimizer pulls toward the middle of the combat block (CENTER_GROUPS)
+CENTER_CATS = {"antiair"}
 
 
 class _Stop(Exception):
@@ -76,6 +78,7 @@ def build_injection(cfg):
         meta = None
     lines.append(f"PRIORITY_ROOMS = {groups['priority']!r}")
     lines.append(f"COMBAT_ROOMS = {groups['combat']!r}")
+    lines.append(f"CENTER_GROUPS = {groups.get('center', [])!r}")
     lines.append(f"NONCOMBAT_ROOMS = {groups['noncombat']!r}")
     lines.append(f"RESOURCE_ROOMS = {groups['resource']!r}")
     lines.append(f"RESOURCE_ANYWHERE = {bool(cfg.get('resource_anywhere', True))}")
@@ -109,6 +112,7 @@ def categorized_rooms(rows):
     """Turn the page's room list (name, category, kind, size, count, armor) into the optimizer's room
     groups, one group per row, and return per-room labels in the order the optimizer builds ROOMS."""
     groups = {k: [] for k in KINDS}
+    groups["center"] = []
     order = {k: [] for k in KINDS}
     syms = iter(NC_SYMBOLS)
     for i, row in enumerate(rows):
@@ -121,6 +125,8 @@ def categorized_rooms(rows):
             continue
         if w <= 0 or h <= 0:
             raise ValueError(f"{name}: width and height must be at least 1.")
+        if kind == "combat" and str(row.get("cat")) in CENTER_CATS:
+            groups["center"].append(len(groups["combat"]))      # index of the group about to be added
         if kind in ("priority", "combat"):
             rg = _armor_range(row.get("armor"), name)
             groups[kind].append((w, h, c) + ((rg,) if rg else ()))
@@ -177,7 +183,7 @@ def layout_json(m, res):
         if meta:
             md = meta[r]
             n = md["name"] + (f" #{md['n']}" if md["of"] > 1 else "")
-            extra = dict(label=md["name"], cat=md["cat"], catLabel=md["catLabel"], kind=md["kind"])
+            extra = dict(center=r in getattr(m, "CENTER_IDX", ()), label=md["name"], cat=md["cat"], catLabel=md["catLabel"], kind=md["kind"])
         rooms.append(dict(extra, name=n, sym=sym, w=w, h=h, x=x, y=y, combat=bool(comb),
                           priority=r in m.PRIORITY_SET,
                           armor=touch.get(r, 0) if comb else None,
@@ -201,9 +207,11 @@ def layout_json(m, res):
         armor_touching_no_room=info["floating"], combat_rooms_without_armor=info["unarmored_rooms"],
         priority_rooms_without_armor=info["unarmored_priority"],
         sweet_spot_shortfall=info["range_under"], sweet_spot_excess=info["range_over"],
+        center_rooms=len(getattr(m, "CENTER_IDX", ())), center_distance=info.get("center_dist", 0.0),
     )
     res_tiles = sorted([list(t) for t in getattr(m, "RES_TILES", ())], key=lambda t: (t[1], t[0]))
-    return dict(score=score, width=m.W, height=m.H, resource_tiles=res_tiles, grid=["".join(row) for row in g],
+    cp = info.get("center_point") if getattr(m, "CENTER_IDX", None) else None
+    return dict(score=score, width=m.W, height=m.H, combat_center=list(cp) if cp else None, resource_tiles=res_tiles, grid=["".join(row) for row in g],
                 rooms=rooms, bonus=bonus, lifts=[list(l) for l in st["lifts"]],
                 vents=[list(v) for v in st["vents"]], armor=sorted([list(t) for t in info["armor"]], key=lambda t: (t[1], t[0])),
                 legend=legend, stats=stats)

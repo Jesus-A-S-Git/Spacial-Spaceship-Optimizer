@@ -50,6 +50,7 @@ Score = weighted armor touchpoints (Shield + Reactors count PRIORITY_WEIGHT time
         - W_RUN    * empty horizontal run length beyond MAX_EMPTY_RUN
         - W_ISO    * non-combat rooms touching armor/lifts
         + W_SPREAD * average distance between priority rooms (capped)
+        - W_CENTER * distance of each CENTER room (e.g. anti-air) from the middle of the other combat rooms
   With --top50 layouts.json (lessons learned from the top-50 ladder ships, see section 8 of the config):
         + W_SHELL  * hull-edge contact, weighted per room kind by how top ships use the edge
                      (non-combat rooms form the outer shell, combat rooms stay inside)
@@ -216,6 +217,13 @@ W_SHELL = 3.0                      # per hull-edge tile a room touches, times th
                                    # preference (non-combat rooms on the edge are rewarded, combat penalized)
 W_NC_CLUSTER = 15.0                # penalty per non-combat room that touches no other non-combat room
 W_LIFT_DENSITY = 20.0              # penalty per lift outside the top-50 band of lifts for this hull's width
+
+# 9) CENTER rooms (e.g. anti-air): pulled toward the middle of all the OTHER combat rooms, so they sit
+#    in the heart of the combat block. The middle is the average centre of every other combat room
+#    (priority rooms included); the penalty is the Manhattan distance, in tiles, from that point.
+#    List COMBAT_ROOMS groups by position (0 = first line). [] switches it off.
+CENTER_GROUPS = []                 # example: [2] if the 3rd COMBAT_ROOMS line is your anti-air
+W_CENTER = 3.0                     # penalty per tile a center room sits away from the combat middle
 
 # ---- ROOMS: (width, height, how_many[, (armor_low, armor_high)]) ----------------------------------------------
 # Priority combat rooms: armor is concentrated on these (e.g. Reactors + Shield).
@@ -386,9 +394,10 @@ ROOMS = []  # (name, symbol, w, h, armor_weight, is_combat)
 ARMOR_RANGES = []   # per room: (low, high) armor sweet spot, or None
 SYMBOLS = {}
 _pool = iter("abcdefghijkmnopqrstuvwyz")
+CENTER_IDX = set()    # combat rooms that want the middle of the combat block (CENTER_GROUPS)
 for kind, groups in (("Priority", PRIORITY_ROOMS), ("Combat", COMBAT_ROOMS)):
     _default_range = PRIORITY_ARMOR_RANGE if kind == "Priority" else COMBAT_ARMOR_RANGE
-    for grp in groups:
+    for _gi, grp in enumerate(groups):
         w, h, c = grp[:3]
         _arange = grp[3] if len(grp) > 3 else _default_range
         if _arange is not None and not (0 <= _arange[0] <= _arange[1]):
@@ -401,6 +410,8 @@ for kind, groups in (("Priority", PRIORITY_ROOMS), ("Combat", COMBAT_ROOMS)):
             ROOMS.append((f"{kind} room {w}x{h} #{i + 1}", sym, w, h,
                           PRIORITY_WEIGHT if kind == "Priority" else 1.0, True))
             ARMOR_RANGES.append(tuple(_arange) if _arange is not None else None)
+            if kind == "Combat" and _gi in CENTER_GROUPS:
+                CENTER_IDX.add(len(ROOMS) - 1)
 NC = len(ROOMS)                       # combat rooms occupy indices 0..NC-1
 PRIORITY_IDX = [i for i, rm in enumerate(ROOMS) if rm[1] == "P"]
 
@@ -829,6 +840,32 @@ def priority_spread(pos):
     return min(SPREAD_CAP, tot / cnt)
 
 
+def combat_center(pos):
+    """(x, y) middle of the combat block: average centre of every combat room that is not a CENTER room."""
+    others = [r for r in range(NC) if r not in CENTER_IDX]
+    if not others:
+        return None
+    return (sum(pos[r][0] + ROOMS[r][2] / 2.0 for r in others) / len(others),
+            sum(pos[r][1] + ROOMS[r][3] / 2.0 for r in others) / len(others))
+
+
+def center_distance(pos):
+    """Total Manhattan distance (tiles) from each CENTER room's centre to the middle of the combat block."""
+    if not CENTER_IDX:
+        return 0.0
+    c = combat_center(pos)
+    if c is None:
+        return 0.0
+    return sum(abs(pos[r][0] + ROOMS[r][2] / 2.0 - c[0]) + abs(pos[r][1] + ROOMS[r][3] / 2.0 - c[1])
+               for r in CENTER_IDX)
+
+
+def _center_note(info):
+    if not CENTER_IDX:
+        return ""
+    return f" | center rooms off the combat middle {info.get('center_dist', 0.0):.1f} tiles"
+
+
 def cheap_score(state):
     """Fast approximate score (no filler rooms, no real post-armor walking)."""
     occ = occupancy(state)
@@ -848,7 +885,7 @@ def cheap_score(state):
     s = (W_ARMOR * sum(v for _, v in top) - W_TRAVEL * avg - W_GAP * len(res)
          - W_DISC * unreach - W_LIFT * lift_penalty(state, tiles) - W_ISO * iso
          - W_VENT * vent_penalty(vl) - W_CORNER * 0.5 * (cmax + cavg)
-         + W_SPREAD * priority_spread(pos))
+         + W_SPREAD * priority_spread(pos) - W_CENTER * center_distance(pos))
     s -= 60 * max(0, ARMOR_COUNT - ncand)
     return s
 
@@ -1668,6 +1705,7 @@ def finalize(state):
     vpen = vent_penalty(vl)
     unarmored_rooms = [r for r in range(NC) if touch[r] == 0]
     unarmored_priority = sum(1 for r in unarmored_rooms if r in PRIORITY_SET)
+    center_dist = center_distance(pos)
     # Top-50 lessons: outer shell of non-combat rooms, non-combat rooms grouped, lifts spaced like top ships
     shell = 0.0
     nc_alone = 0
@@ -1695,6 +1733,7 @@ def finalize(state):
              - W_EMPTY * empty_unused - W_LIFT_BALANCE * lift_balance_pen
              - W_LIFT_COUNT * len(state["lifts"])
              + side_bonus
+             - W_CENTER * center_dist
              # top-50 style points only count once every combat room is reachable, so they never pull
              # the search toward a layout with a cut-off room
              + (W_SHELL * shell - W_NC_CLUSTER * nc_alone - W_LIFT_DENSITY * lift_density_pen if unreach == 0 else 0.0))
@@ -1706,7 +1745,8 @@ def finalize(state):
                 lift_usage=lift_usage, lift_balance_pen=lift_balance_pen,
                 touch=dict(touch), range_under=under_units, range_over=over_units,
                 shell=shell, nc_alone=nc_alone, lift_density_pen=lift_density_pen,
-                edge_tiles=dict(edge_tiles), ring_tiles=dict(ring_tiles))
+                edge_tiles=dict(edge_tiles), ring_tiles=dict(ring_tiles),
+                center_dist=center_dist, center_point=combat_center(pos))
     return score, g, info
 
 
@@ -2307,6 +2347,7 @@ def report(res, color=True):
           f" | unused open tiles {info.get('empty_unused', 0)}"
           f" | long-run excess {info['long_extra']} | isolation violations {info['iso']}"
           f" | priority spread {info['spread']:.1f}"
+          f"{_center_note(info)}"
           f" | vents {len(info['state']['vents'])} (unlinked {info['vent_pen']})"
           f" | armor touching no room {info['floating']}"
           f" | combat rooms without armor {info.get('unarmored_rooms', 0)}"
