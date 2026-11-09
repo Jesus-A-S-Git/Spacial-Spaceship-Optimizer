@@ -128,33 +128,47 @@ function armor(a) {
   $("armorNotes").replaceChildren(...notes.map((n) => el("p", { text: n })));
 }
 
-function calibration(a) {
-  const c = a.calibration;
-  if (!c) { $("calibText").textContent = "No calibration in this data."; return; }
-  const last = c.rounds[c.rounds.length - 1] || {};
-  const before = last.real_beats_optimizer_before_fit || {};
-  const after = last.real_beats_optimizer_after_fit || {};
-  $("calibText").replaceChildren(
-    el("p", { text: `For ${c.ships_used} top ships, the optimizer built its own layout on the same hull with the same rooms ` +
-      `(${c.search.iters} search steps each), and the score weights were fitted so that the real top layout scores higher. ` +
-      `Odd-ranked ships were used for fitting and even-ranked ships only for checking.` }),
-    el("p", { text: `In the last round, on held-out ships, the real layout beat the optimizer's in ${pct(before.test)} of cases with the ` +
-      `starting weights and ${pct(after.test)} with the fitted weights. High numbers mean the score already prefers the top players' ` +
-      `layouts: the weights are not what holds the optimizer back, the search is. It does not reach top-player layouts from ` +
-      `scratch, which is why the optimizer now starts from them.` }));
-  const rt = $("calibRounds");
-  rt.replaceChildren(el("tr", {}, el("th", { text: "Round" }), el("th", { class: "num", text: "Ships" }),
-    el("th", { class: "num", text: "Real wins before fit" }), el("th", { class: "num", text: "Real wins after fit" })));
-  c.rounds.forEach((r) => rt.append(el("tr", {}, el("td", { text: String(r.round) }), el("td", { class: "num", text: String(r.ships.train + r.ships.test) }),
-    el("td", { class: "num", text: `${pct(r.real_beats_optimizer_before_fit.test)} held out / ${pct(r.real_beats_optimizer_before_fit.train)} fitted` }),
-    el("td", { class: "num", text: `${pct(r.real_beats_optimizer_after_fit.test)} held out / ${pct(r.real_beats_optimizer_after_fit.train)} fitted` }))));
-  const t = $("calibTable");
-  t.replaceChildren(el("tr", {}, el("th", { text: "Weight" }), el("th", { class: "num", text: "Default" }), el("th", { class: "num", text: "Fitted" }), el("th", { class: "num", text: "Change" })));
-  Object.keys(c.defaults).forEach((k) => {
-    const d = c.defaults[k], w = c.weights[k], ch = d ? w / d : 1;
-    t.append(el("tr", {}, el("td", { text: k }), el("td", { class: "num", text: fmt(d, 2) }), el("td", { class: "num", text: fmt(w, 2) }),
-      el("td", { class: "num", text: Math.abs(ch - 1) < 0.01 ? "same" : "x" + ch.toFixed(2) })));
+const BENCH_ROWS = [
+  ["armor_sum", "Armor value (touchpoints, priority rooms count 3x)", 0, true],
+  ["armor_pri", "Armor tiles on each priority room", 2, true],
+  ["armor_float", "Armor touching no combat room", 1, false],
+  ["lifts", "Lift columns", 1, null],
+  ["unreach", "Room pairs crew cannot reach", 0, null],
+  ["nc_grouped", "Non-combat rooms grouped", "%", true],
+  ["edge_nc", "Non-combat outline on the hull edge", "%", null],
+];
+const BENCH_NAMES = {
+  "original": "Original weights, from scratch",
+  "top": "Top-player style, from scratch",
+  "top+templates": "Top-player style, starting from other top layouts on the hull",
+  "original+templates": "Original weights, starting from other top layouts",
+};
+function benchmark(a) {
+  const b = a.benchmark;
+  if (!b) { $("benchText").textContent = "No benchmark in this data yet (it runs with the weekly Action)."; return; }
+  const n = b.configs[0].ships;
+  $("benchText").replaceChildren(
+    el("p", { text: `${n} top-100 ships (even ranks): the optimizer got the same hull, the same rooms and the same armor count as the real ` +
+      `player, ${Math.round(b.seconds)} seconds of search on one core and the website's settings, and its best layout was measured ` +
+      `the same way as the real ship. Medians over the ships; data from ${(b.updated || "").slice(0, 10)}.` }),
+    el("p", { text: "Top players pack their hulls with armor and accept that crew cannot walk everywhere. The top-player style " +
+      "(the website's default) weights armor the same way; the original weights keep every room reachable at the cost of armor." }));
+  const t = $("benchTable");
+  t.replaceChildren(el("tr", {}, el("th", { text: "Measure" }), el("th", { class: "num", text: "Real top ships" }),
+    ...b.configs.map((c) => el("th", { class: "num", text: BENCH_NAMES[c.name] || c.name }))));
+  const show = (v, d) => (d === "%" ? pct(v) : fmt(v, d));
+  BENCH_ROWS.forEach(([k, label, d, higher]) => {
+    const real = b.configs[0].real[k];
+    t.append(el("tr", {}, el("td", { text: label }), el("td", { class: "num", text: show(real, d) }),
+      ...b.configs.map((c) => {
+        const v = c.optimizer[k];
+        let note = "";
+        if (k === "armor_sum") note = ` (${Math.round((100 * v) / real)}%)`;
+        return el("td", { class: "num", text: show(v, d) + note });
+      })));
   });
+  t.append(el("tr", {}, el("td", { text: "Ships where the optimizer's armor value is at least the real ship's" }), el("td"),
+    ...b.configs.map((c) => el("td", { class: "num", text: `${c.armor_at_least_real} of ${c.ships}` }))));
 }
 
 // ---------------------------------------------------------------- gallery
@@ -224,5 +238,5 @@ Promise.all([Top100.load(), Hulls.load(false).catch(() => null)]).then(() => {
   edgeBars(a); show("secEdge");
   adjTable(a); show("secAdj");
   armor(a); show("secArmor");
-  calibration(a); show("secCalib");
+  benchmark(a); show("secCalib");
 });

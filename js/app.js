@@ -36,19 +36,28 @@ const DEFAULTS = {
   walk_noncombat: true,     // crew walk through every room (as in the game), not only combat rooms
   use_top: true,            // start searches from top-100 layouts on the same hull
   learn_top: true,          // score with patterns and habits learned from the top 100
+  style_v2: true,
   priority_range: [3, 6],
   combat_range: [2, 6],
   settings: {
-    ARMOR_COUNT: 45, MIN_LIFTS: 2, MAX_LIFTS: 6, START_LIFTS: 2, VENT_COUNT: 8,
+    ARMOR_COUNT: 45, MIN_LIFTS: 1, MAX_LIFTS: 4, START_LIFTS: 2, VENT_COUNT: 8,
     VENT_LINK_COST: 1, LIFT_COST: 2, MAX_EMPTY_RUN: 3,
-    PRIORITY_WEIGHT: 3, W_ARMOR: 1, W_UNARMORED: 250, W_PRIORITY_UNARMORED: 500, W_FLOAT: 45,
+    PRIORITY_WEIGHT: 3, W_ARMOR: 4, W_UNARMORED: 250, W_PRIORITY_UNARMORED: 500, W_FLOAT: 45,
     W_ARMOR_UNDER: 25, PRIORITY_UNDER_MULT: 2, W_ARMOR_OVER: 2,
-    W_TRAVEL: 5, W_CORNER: 4, W_DISC: 500, CORNER_UNREACHABLE: 60,
-    W_LIFT: 35, W_LTOUCH: 25, W_LIFT_BALANCE: 50, W_LIFT_COUNT: 8,
-    W_GAP: 12, W_EMPTY: 6, W_RUN: 6, W_ISO: 25,
+    W_TRAVEL: 0.75, W_CORNER: 0.4, W_DISC: 15, CORNER_UNREACHABLE: 60,
+    W_LIFT: 35, W_LTOUCH: 25, W_LIFT_BALANCE: 50, W_LIFT_COUNT: 18,
+    W_GAP: 2.5, W_EMPTY: 6, W_RUN: 6, W_ISO: 25,
     W_SPREAD: 1.5, SPREAD_CAP: 24, W_VENT: 15, W_CENTER: 3, W_PATTERN: 3, W_SHELL: 3, W_NC_CLUSTER: 15, W_LIFT_DENSITY: 20,
   },
   search: { iters: 1200, polish: 300, restarts: 0, time_limit: 300, seed: 1, stagnation: 0, population: 24, cores: 0 },
+};
+
+// Weight styles (Scoring weights > Style). "top" is the default: armor-first weights that bring layouts close
+// to the top-100 ladder ships (tools/benchmark_top.py; the optimizer's STYLE = "top" / --style top).
+// "original" = the optimizer's own weights, which value crew reaching every room much more.
+const STYLES = {
+  top: { W_ARMOR: 4, W_DISC: 15, W_TRAVEL: 0.75, W_CORNER: 0.4, W_GAP: 2.5, MIN_LIFTS: 1, MAX_LIFTS: 4, W_LIFT_COUNT: 18 },
+  original: { W_ARMOR: 1, W_DISC: 500, W_TRAVEL: 5, W_CORNER: 4, W_GAP: 12, MIN_LIFTS: 2, MAX_LIFTS: 6, W_LIFT_COUNT: 8 },
 };
 
 const STRUCTURE_FIELDS = [
@@ -100,6 +109,12 @@ function loadSettings() {
     if (raw) {
       const s = JSON.parse(raw), d = clone(DEFAULTS);
       if (!Array.isArray(s.rooms) && (s.priority_rooms || s.combat_rooms || s.noncombat_rooms || s.resource_rooms)) s.rooms = migrateRooms(s);
+      // one-time: untouched old default weights -> the new top-player style default
+      if (!s.style_v2) {
+        const set = s.settings || {};
+        if (Object.entries(STYLES.original).every(([k, v]) => set[k] === undefined || +set[k] === v)) s.settings = Object.assign({}, set, STYLES.top);
+        s.style_v2 = true;
+      }
       return Object.assign(d, s, { settings: Object.assign(d.settings, s.settings || {}), search: Object.assign(d.search, s.search || {}) });
     }
   } catch (e) { /* storage blocked or corrupt: fall back to defaults */ }
@@ -410,15 +425,22 @@ function updateTopNote() {
   box.textContent = `${lays.length} top-100 player${lays.length > 1 ? "s use" : " uses"} this hull (${lays[0].ship_name}, best rank #${best}). ` +
     `The search starts from their layouts, with your rooms put where they placed the same type and size.`;
 }
-function updateCalibNote() {
-  const a = Top100.analysis, c = a && a.calibration;
-  const btn = $("useCalib");
-  btn.disabled = !c;
-  if (!c) { $("calibNote").textContent = ""; return; }
-  const last = c.rounds[c.rounds.length - 1] || {};
-  const pct = (v) => (v == null ? "?" : Math.round(v * 100) + "%");
-  $("calibNote").textContent = `Fitted on ${c.ships_used} top ships (${(a.updated || "").slice(0, 10)}). Real top layouts beat the optimizer's own on ` +
-    `${pct((last.real_beats_optimizer_before_fit || {}).test)} of held-out ships with the default weights, ${pct((last.real_beats_optimizer_after_fit || {}).test)} with these.`;
+function currentStyle() {
+  for (const [name, w] of Object.entries(STYLES)) {
+    if (Object.entries(w).every(([k, v]) => +cfgState.settings[k] === v)) return name;
+  }
+  return null;
+}
+function updateStyleNote() {
+  const st = currentStyle();
+  ["top", "original"].forEach((n) => $("style_" + n).classList.toggle("active", st === n));
+  const b = Top100.analysis && Top100.analysis.benchmark;
+  const cfg = b && b.configs.find((c) => c.name === "top");
+  let txt = st === "top" ? "Top-player style: armor first, like the top-100 ships."
+    : st === "original" ? "Original style: crew can reach every room, at the cost of armor."
+    : "Custom weights.";
+  if (cfg) txt += ` On top-100 hulls with the same rooms, top-player style reaches ${Math.round(100 * cfg.optimizer.armor_sum / cfg.real.armor_sum)}% of the real ships' armor value (details on the Top 100 page).`;
+  $("styleNote").textContent = txt;
 }
 function buildTopUi() {
   $("useTop").checked = cfgState.use_top;
@@ -427,14 +449,16 @@ function buildTopUi() {
   $("learnTop").onchange = (e) => { cfgState.learn_top = e.target.checked; saveSettings(); };
   $("walkNc").checked = cfgState.walk_noncombat;
   $("walkNc").onchange = (e) => { cfgState.walk_noncombat = e.target.checked; saveSettings(); };
-  $("useCalib").onclick = () => {
-    const c = Top100.analysis && Top100.analysis.calibration;
-    if (!c) return;
-    Object.entries(c.weights).forEach(([k, v]) => { if (k in cfgState.settings) cfgState.settings[k] = +(+v).toPrecision(4); });
-    saveSettings(); buildWeights();
-    $("calibNote").textContent = "Calibrated weights applied. Reset to defaults puts the old ones back.";
-  };
+  Object.keys(STYLES).forEach((name) => {
+    $("style_" + name).onclick = () => {
+      Object.assign(cfgState.settings, STYLES[name]);
+      saveSettings(); buildWeights(); buildStructure(); updateStyleNote();
+    };
+  });
+  $("weights").addEventListener("change", updateStyleNote);
+  $("structure").addEventListener("change", updateStyleNote);
 }
+
 
 // ---------------------------------------------------------------- worker control (one per CPU core)
 // Each worker is a separate Python runtime running the optimizer with its own random seed. The search runs
@@ -766,7 +790,7 @@ Promise.all([Hulls.load(false).catch(() => null), Top100.load()]).then(() => {
     $("shipStatus").textContent = `Hull set to ${ship.name} from the Top 100 page.`;
     history.replaceState(null, "", location.pathname);
   }
-  updateTopNote(); updateCalibNote();
+  updateTopNote(); updateStyleNote();
 });
 GameRooms.load().then((n) => {
   if (!n) return;

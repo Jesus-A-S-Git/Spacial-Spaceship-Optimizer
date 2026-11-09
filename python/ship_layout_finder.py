@@ -241,6 +241,14 @@ W_PATTERN = 0.0                    # strength of the learned patterns
 #     bedrooms, storage etc. become walkable floor too (needed to score real top ships as connected).
 WALK_NONCOMBAT = False
 
+# 12) STYLE. "original" = the weights above. "top" = armor-first weights that bring layouts close to the
+#     top-100 ladder ships (tools/benchmark_top.py: same hull and rooms as real top ships, ~95% of their armor
+#     value, more armor on priority rooms, 2 lifts like them; crew reach is traded away the way top players do).
+#     Also on the command line:  --style top
+STYLE = "original"
+TOP_STYLE = dict(W_ARMOR=4.0, W_DISC=15.0, W_TRAVEL=0.75, W_CORNER=0.4, W_GAP=2.5,
+                 MIN_LIFTS=1, MAX_LIFTS=4, W_LIFT_COUNT=18.0)
+
 # ---- ROOMS: (width, height, how_many[, (armor_low, armor_high)]) ----------------------------------------------
 # Priority combat rooms: armor is concentrated on these (e.g. Reactors + Shield).
 PRIORITY_ROOMS = [
@@ -399,6 +407,16 @@ def _load_top50(path):
         pass
     return pri
 
+
+for _i, _a in enumerate(sys.argv):                       # --style top / --style=top (read at import, like --hull)
+    if _a == "--style" and _i + 1 < len(sys.argv):
+        STYLE = sys.argv[_i + 1]
+    elif _a.startswith("--style="):
+        STYLE = _a.split("=", 1)[1]
+if STYLE == "top":
+    globals().update(TOP_STYLE)
+elif STYLE != "original":
+    raise SystemExit(f"STYLE must be 'original' or 'top', not {STYLE!r}")
 
 TOP50 = _load_top50(_top50_path())
 if TOP50 and TOP50_ARMOR_RANGES:
@@ -2661,6 +2679,8 @@ def main():
                     help="ignore an existing checkpoint instead of resuming from its saved population")
     ap.add_argument("--no-color", action="store_true",
                     help="disable terminal colors in the final layout grid")
+    ap.add_argument("--style", default=None, choices=["original", "top"],
+                    help="weights: 'top' = armor-first, close to the top-100 ladder ships (read at import, see STYLE)")
     ap.add_argument("--top50", default=None,
                     help="layouts.json from pixyship_fetch_layouts.py: score layouts with lessons from top ladder ships")
     a = ap.parse_args()

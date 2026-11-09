@@ -32,7 +32,8 @@ ship-optimizer-site/
 │   ├── build_ship_list.py       writes data/ships.json (reuses grab_hull.py)
 │   ├── build_room_list.py       writes data/rooms.json
 │   ├── pixyship_fetch_layouts.py   fetches the top-100 ladder layouts from PixyShip
-│   └── analyze_top.py           analyses them and calibrates the optimizer
+│   ├── analyze_top.py           analyses them (patterns, priors)
+│   └── benchmark_top.py         measures how close the optimizer gets to real top ships
 ├── .github/workflows/refresh-ships.yml   rebuilds all data weekly (ships, rooms, top 100)
 ├── .nojekyll                    tells GitHub Pages to serve files as-is
 └── README.md
@@ -78,9 +79,11 @@ optimizer learned:
 * **Learned patterns** (*Search > Score with patterns learned from the top 100*): which room types top ships
   put side by side and on the hull edge (optimizer section 10, `TAG_ADJ` / `TAG_EDGE` / `W_PATTERN`), plus
   the `--top50` habits (edge use per kind, grouped non-combat rooms, lift spacing).
-* **Calibrated weights** (*Scoring weights > Use top-100 calibrated weights*): the optimizer builds its own
-  layout for each top ship's hull and rooms, and the weights are fitted so the real top layout scores
-  higher (odd ranks fit, even ranks check).
+* **Top-player style** (*Scoring weights > Style*, the default): armor-first weights. `tools/benchmark_top.py`
+  gives the optimizer the same hull, rooms and armor count as real top-100 ships and compares its best layout
+  with theirs; the original weights value crew reaching every room so much that layouts end up with about
+  25% less armor value than top ships. The top-player style closes most of that gap (results on the Top 100
+  page, re-measured weekly). Command line: `--style top` or `STYLE = "top"` (optimizer section 12).
 * **Walking** (*Armor, lifts and vents*): crew walk through every room, as in the game (optimizer
   `WALK_NONCOMBAT`). The command line keeps the original combat-floors-only model unless you set it.
 
