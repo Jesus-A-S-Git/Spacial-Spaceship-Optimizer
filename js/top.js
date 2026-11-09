@@ -1,5 +1,5 @@
 "use strict";
-// Top-100 ladder data (data/top_layouts.json + data/top_analysis.json, built weekly by the GitHub Action
+// Top-100 ladder data (data/top_layouts.json + data/top_analysis.json, built every two weeks by the GitHub Action
 // with tools/pixyship_fetch_layouts.py and tools/analyze_top.py).
 const Top100 = (() => {
   let layouts = null, analysis = null, loading = null;

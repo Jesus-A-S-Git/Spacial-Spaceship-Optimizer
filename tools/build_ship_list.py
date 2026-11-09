@@ -5,7 +5,7 @@
     python3 tools/build_ship_list.py --source ships.xml   # from a saved .json/.xml file
 
 Reuses the loading and grid rules from grab_hull.py, so both always agree.
-The "Refresh ship list" GitHub Action runs this every week and commits the result.
+The "Refresh ship list" GitHub Action runs this every two weeks and commits the result.
 """
 import argparse, json, os, sys, time
 
