@@ -90,8 +90,8 @@ def build_injection(cfg):
     priors = cfg.get("top50_priors")
     if priors and isinstance(priors, dict) and "edge_pref" in priors:
         # the optimizer reads its top-50 numbers from a file at import time: hand them over as one
-        path = os.path.join(tempfile.gettempdir(), "top100_priors.json")
-        with open(path, "w", encoding="utf-8") as f:
+        fd, path = tempfile.mkstemp(prefix="top100_priors_", suffix=".json")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(priors, f)
         lines.append(f"TOP50_FILE = {path!r}")
     pat = cfg.get("patterns") or {}

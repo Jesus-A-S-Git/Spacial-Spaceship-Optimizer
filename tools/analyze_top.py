@@ -248,8 +248,8 @@ FEATURES = [  # (weight, feature from finalize info; score = sum(weight * featur
 BASE_PATTERN = 3.0          # starting W_PATTERN (the optimizer's own default is 0 = off)
 
 
-def ship_module(ship, patterns, weights=None):
-    """Build the optimizer for this ship's hull and room list; return (module, state)."""
+def ship_cfg(ship, patterns, weights=None, settings=None):
+    """Optimizer config for this ship's hull and room list, and the rooms in the optimizer's room order."""
     groups = {}                                   # identical rooms share one row (as on the page)
     for r in sorted(ship.rooms, key=lambda r: KIND_ORDER.index(r["kind"])):
         groups.setdefault((r["kind"], r["cat"], r["name"], r["w"], r["h"]), []).append(r)
@@ -259,10 +259,16 @@ def ship_module(ship, patterns, weights=None):
     nl = len(ship.lifts)
     cfg = dict(hull=ship.hull, rooms=rows, resource_anywhere=True, place_bonus_rooms=False, patterns=patterns,
                walk_noncombat=True,
-               settings=dict(ARMOR_COUNT=len(ship.armor), MIN_LIFTS=min(nl, 1), MAX_LIFTS=max(nl, 1),
-                             START_LIFTS=max(1, min(nl, 2)), VENT_COUNT=0, W_PATTERN=1.0))
+               settings=settings or dict(ARMOR_COUNT=len(ship.armor), MIN_LIFTS=min(nl, 1), MAX_LIFTS=max(nl, 1),
+                                         START_LIFTS=max(1, min(nl, 2)), VENT_COUNT=0, W_PATTERN=1.0))
     if weights:
         cfg["settings"].update(weights)
+    return cfg, rooms
+
+
+def ship_module(ship, patterns, weights=None):
+    """Build the optimizer for this ship's hull and room list; return (module, state)."""
+    cfg, rooms = ship_cfg(ship, patterns, weights)
     m = web_driver.build_module(cfg, os.path.join(ROOT, "python", "ship_layout_finder.py"))
     state = dict(pos=[(r["x"], r["y"]) for r in rooms], lifts=list(ship.lifts), vents=[])
     return m, state
@@ -390,7 +396,8 @@ def main():
     ap.add_argument("--raw", help="layouts.json from pixyship_fetch_layouts.py (default: re-use data/top_layouts.json)")
     ap.add_argument("--ships", default=os.path.join(ROOT, "data", "ships.json"))
     ap.add_argument("--out-dir", default=os.path.join(ROOT, "data"))
-    ap.add_argument("--calibrate", type=int, default=100, help="how many ships to calibrate on (0 = skip)")
+    ap.add_argument("--calibrate", type=int, default=0, help="how many ships to run the (old) weight calibration on; "
+                    "0 = skip. tools/benchmark_top.py replaced it: it compares against the full-strength search")
     ap.add_argument("--rounds", type=int, default=2, help="optimise-then-refit rounds")
     ap.add_argument("--iters", type=int, default=400, help="search steps per ship and round")
     ap.add_argument("--perturb", default="1,2,4,8,16,32,1,3,6,12", help="scramble strengths (random moves) for the comparisons")

@@ -34,6 +34,8 @@ jobs:
         run: |
           if [ -f build/top/layouts.json ]; then
             python3 tools/analyze_top.py --raw build/top/layouts.json
+            # how close the optimizer gets to the real ships (original vs top-player style), ~20 minutes
+            python3 tools/benchmark_top.py --ships 8 --seconds 40 --into data/top_analysis.json
           fi
       - name: Commit if changed
         run: |

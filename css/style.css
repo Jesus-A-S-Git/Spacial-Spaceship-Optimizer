@@ -92,3 +92,4 @@ td.typecell { white-space: nowrap; }
 .topnav { display: flex; gap: 6px; margin-bottom: 8px; }
 .topnav a { color: var(--muted); text-decoration: none; padding: 4px 10px; border: 1px solid var(--border); border-radius: 14px; font-size: 13px; }
 .topnav a.active, .topnav a:hover { color: var(--text); border-color: var(--accent); }
+.stylebar button.active { border-color: var(--accent); background: #1c3350; }
