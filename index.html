@@ -79,6 +79,8 @@
           <b>priority</b> rooms (reactors, shields) get the most armor, <b>combat</b> rooms are armored and linked
           for crew travel (<b>anti-air</b> is also pulled to the middle of the other combat rooms), <b>non-combat</b> rooms stay away from armor and lifts, <b>resource</b> rooms go on <code>r</code> tiles.
           Armor = this room's own sweet spot (e.g. <code>4-6</code>); leave empty for the default.</p>
+        <div id="roomLibNote" class="muted"></div>
+        <datalist id="gameRoomNames"></datalist>
         <div id="roomSummary" class="roomsummary"></div>
         <div id="roomList"></div>
         <h4>Add a room</h4>
@@ -101,14 +103,18 @@
       <details open>
         <summary>Search</summary>
         <div id="search" class="grid2"></div>
-        <p class="muted">Leave restarts at 0 and use the time limit (or press Stop) to keep searching. Results improve with more restarts.</p>
+        <p class="muted">Leave restarts at 0 and use the time limit (or press Stop) to keep searching. The search then runs in
+          rounds on every CPU core and shares the best layouts between cores after each round. Results improve with more time.</p>
+        <label class="inline"><input type="checkbox" id="resume"> Continue from the best layouts of earlier searches</label>
+        <div id="resumeNote" class="muted"></div>
       </details>
     </aside>
   </main>
 
-  <footer class="muted">Python runs through <a href="https://pyodide.org">Pyodide</a> in a Web Worker. A browser uses one CPU core, so long searches are slower than the command-line version.</footer>
+  <footer class="muted">Python runs through <a href="https://pyodide.org">Pyodide</a> in a Web Worker. The search uses several CPU cores; the command-line version is still faster for very long runs.</footer>
 
   <script src="js/hulls.js"></script>
+  <script src="js/gamerooms.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

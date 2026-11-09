@@ -15,18 +15,21 @@ const DEFAULTS = {
   // One list for every room. cat = a category from ROOM_CATEGORIES (its kind decides how the optimizer
   // treats the room); armor = "" for the default sweet spot or "low-high" for this room's own.
   rooms: [
-    { name: "Reactor", cat: "reactor", w: 3, h: 2, count: 3, armor: "" },
-    { name: "Shield Generator", cat: "shield", w: 3, h: 2, count: 1, armor: "" },
-    { name: "Laser", cat: "laser", w: 2, h: 2, count: 2, armor: "" },
-    { name: "Mining Laser", cat: "laser", w: 3, h: 2, count: 2, armor: "" },
-    { name: "Anti-air", cat: "antiair", w: 2, h: 2, count: 2, armor: "" },
-    { name: "Missile Launcher", cat: "missile", w: 3, h: 2, count: 2, armor: "" },
-    { name: "Fighter Hangar", cat: "hangar", w: 4, h: 2, count: 1, armor: "" },
-    { name: "Android Studio", cat: "utility", w: 2, h: 2, count: 2, armor: "" },
-    { name: "Cloak", cat: "utility", w: 3, h: 2, count: 1, armor: "" },
-    { name: "Engine", cat: "utility", w: 3, h: 2, count: 1, armor: "" },
+    { name: "Small Reactor", cat: "reactor", w: 3, h: 2, count: 3, armor: "", short: "REA" },
+    { name: "Fusion Reactor", cat: "reactor", w: 4, h: 2, count: 1, armor: "", short: "FRE" },
+    { name: "Shield Generator", cat: "shield", w: 3, h: 2, count: 1, armor: "", short: "SHD" },
+    { name: "Photon Phaser", cat: "laser", w: 2, h: 2, count: 2, armor: "" },
+    { name: "Mineral Mining Laser", cat: "laser", w: 3, h: 2, count: 2, armor: "" },
+    { name: "Plasma Discharger", cat: "laser", w: 3, h: 2, count: 2, armor: "" },
+    { name: "Guardian Defense System", cat: "antiair", w: 3, h: 2, count: 1, armor: "", short: "GDS" },
+    { name: "Drone Hangar", cat: "hangar", w: 5, h: 2, count: 1, armor: "", short: "DH" },
+    { name: "Hangar", cat: "hangar", w: 5, h: 2, count: 1, armor: "", short: "HAN" },
+    { name: "Ion Cannon", cat: "combat", w: 3, h: 3, count: 1, armor: "", short: "ION" },
     { name: "Freeze Ray", cat: "combat", w: 4, h: 2, count: 1, armor: "" },
-    { name: "Bedroom", cat: "crew", w: 3, h: 2, count: 9, armor: "" },
+    { name: "Android Studio", cat: "utility", w: 2, h: 2, count: 1, armor: "", short: "AS" },
+    { name: "Shield Battery", cat: "utility", w: 2, h: 2, count: 1, armor: "" },
+    { name: "Cloak Generator", cat: "utility", w: 3, h: 2, count: 1, armor: "", short: "CG" },
+    { name: "Bedroom", cat: "crew", w: 3, h: 2, count: 9, armor: "", short: "BED" },
   ],
   resource_anywhere: true,
   place_bonus_rooms: true,
@@ -42,7 +45,7 @@ const DEFAULTS = {
     W_GAP: 12, W_EMPTY: 6, W_RUN: 6, W_ISO: 25,
     W_SPREAD: 1.5, SPREAD_CAP: 24, W_VENT: 15, W_CENTER: 3,
   },
-  search: { iters: 1200, polish: 300, restarts: 0, time_limit: 300, seed: 1, stagnation: 0, population: 24 },
+  search: { iters: 1200, polish: 300, restarts: 0, time_limit: 300, seed: 1, stagnation: 0, population: 24, cores: 0 },
 };
 
 // Room categories. kind = how the optimizer treats the room:
@@ -98,7 +101,7 @@ const SEARCH_FIELDS = [
   ["iters", "Annealing steps per restart"], ["polish", "Polish steps per restart"],
   ["restarts", "Restarts (0 = until stopped)"], ["time_limit", "Time limit, seconds (0 = none)"],
   ["seed", "Random seed"], ["stagnation", "Stop after N restarts with no gain (0 = off)"],
-  ["population", "Elite layouts kept"],
+  ["population", "Elite layouts kept"], ["cores", "CPU cores to use (0 = automatic)"],
 ];
 const STORE_KEY = "shipOptimizerSettings.v1";
 
@@ -106,7 +109,7 @@ const STORE_KEY = "shipOptimizerSettings.v1";
 const $ = (id) => document.getElementById(id);
 const clone = (o) => JSON.parse(JSON.stringify(o));
 let cfgState = loadSettings();
-let worker = null, workerReady = false, running = false;
+let running = false;
 let layouts = [], activeIdx = 0, lastBest = null;
 
 function loadSettings() {
@@ -268,9 +271,22 @@ function roomCard(room, idx) {
   const cat = catOf(room.cat);
   const card = el("div", { class: "roomcard", "data-idx": String(idx) });
   card.style.borderLeftColor = cat.color;
-  const name = el("input", { type: "text", maxlength: "40", placeholder: "Room name", title: "Room name", "aria-label": "Room name" });
+  const name = el("input", { type: "text", maxlength: "40", placeholder: "Room name (type to search game rooms)", title: "Room name. Pick a game room to fill in its real size and type.", "aria-label": "Room name", list: "gameRoomNames", autocomplete: "off" });
   name.value = room.name;
-  name.addEventListener("change", () => { room.name = name.value.trim(); saveSettings(); });
+  name.addEventListener("change", () => {
+    room.name = name.value.trim();
+    const g = GameRooms.find(room.name);
+    if (g) {                                   // a real game room: use its size and type
+      room.name = g.name; room.w = g.w; room.h = g.h; room.cat = g.cat; room.short = g.short;
+      saveSettings(); buildRooms();
+      const card = $("roomList").querySelector(`.roomcard[data-idx="${idx}"]`);
+      if (card) { const q = card.querySelector('.rc-nums input[aria-label="How many"]'); if (q) { q.focus(); q.select(); } }
+      return;
+    }
+    room.short = "";
+    saveSettings();
+    hint.textContent = "";
+  });
   const sel = categorySelect(room.cat, (v) => {
     const oldLabel = catOf(room.cat).label;
     room.cat = v;
@@ -287,6 +303,12 @@ function roomCard(room, idx) {
   const del = el("button", { class: "small icon", text: "×", title: "Remove", "aria-label": "Remove" });
   del.onclick = () => { cfgState.rooms.splice(idx, 1); saveSettings(); buildRooms(); };
   card.append(el("div", { class: "rc-top" }, name, sel, up, dup, del));
+  const g = GameRooms.find(room.name);
+  const hint = el("div", { class: "rc-hint muted" });
+  if (g) {
+    hint.textContent = `Game room: ${GameRooms.describe(g)}` + (g.w !== room.w || g.h !== room.h ? ` (size changed to ${room.w}x${room.h})` : "");
+  }
+  card.append(hint);
 
   const nums = el("div", { class: "rc-nums" });
   const field = (label, input) => nums.append(el("label", {}, el("span", { text: label }), input));
@@ -385,59 +407,143 @@ function buildWeights() {
 function buildSearch() { buildGrid("search", SEARCH_FIELDS, cfgState.search, "1"); }
 function buildAll() { buildHull(); buildRooms(); buildStructure(); buildWeights(); buildSearch(); }
 
-// ---------------------------------------------------------------- worker control
-function newWorker() {
-  workerReady = false;
-  worker = new Worker("js/worker.js");
-  worker.onmessage = (e) => handle(e.data);
-  worker.onerror = (e) => showError("Worker error: " + (e.message || "could not start"));
+// ---------------------------------------------------------------- worker control (one per CPU core)
+// Each worker is a separate Python runtime running the optimizer with its own random seed. The search runs
+// in rounds: when a round ends, every core starts the next one from the best layouts found by ALL cores,
+// so good ideas spread between them. The best layouts are also saved in this browser, so a later
+// search can continue from them.
+const ROUND_SECONDS = 45;
+const BEST_KEY = "shipOptimizerBest.v1";
+let pool = [];           // [{w, ready, prog, layouts}]
+let run = null;          // the search in progress
+let found = [];          // best layouts across all cores and rounds (layout JSON, best first)
+
+function autoCores() { return Math.max(1, Math.min(8, (navigator.hardwareConcurrency || 2) - 1)); }
+function wantedCores() {
+  const n = Math.round(cfgState.search.cores || 0);
+  return n > 0 ? Math.min(16, n) : autoCores();
 }
+function spawn(i) {
+  const slot = { w: new Worker("js/worker.js"), ready: false, prog: null, layouts: [], odds: null };
+  slot.w.onmessage = (e) => handle(e.data, slot);
+  slot.w.onerror = (e) => showError("Worker error: " + (e.message || "could not start"));
+  pool[i] = slot;
+}
+function ensurePool(n) {
+  while (pool.length > n) pool.pop().w.terminate();
+  for (let i = pool.length; i < n; i++) spawn(i);
+}
+function resetPool() { pool.forEach((p) => p.w.terminate()); pool = []; ensurePool(1); }
+function anyReady() { return pool.some((p) => p.ready); }
 function setIdleUi() {
   running = false;
-  $("startBtn").disabled = !workerReady;
+  run = null;
+  $("startBtn").disabled = !anyReady();
   $("stopBtn").disabled = true;
 }
 function showError(msg) {
   const b = $("errorBox"); b.textContent = msg; b.hidden = false;
-  if (running) setIdleUi();
+  if (running) { pool.forEach((p) => p.w.terminate()); pool = []; ensurePool(1); setIdleUi(); }
   $("status").textContent = "Error";
 }
-function handle(m) {
+function loadSavedBest() {
+  try { const v = JSON.parse(localStorage.getItem(BEST_KEY) || "null"); return Array.isArray(v) ? v : []; } catch (e) { return []; }
+}
+function saveBest() {
+  try { localStorage.setItem(BEST_KEY, JSON.stringify(found.slice(0, 6).map((l) => l.state).filter(Boolean))); } catch (e) { /* ignore */ }
+}
+function updateSavedNote() {
+  const n = loadSavedBest().length;
+  $("resumeNote").textContent = n ? `${n} saved layout${n > 1 ? "s" : ""} from earlier searches in this browser.` : "No saved layouts yet.";
+  $("resume").disabled = !n;
+}
+function mergeLayouts(list) {
+  if (!list || !list.length) return false;
+  const key = (l) => l.grid.join("/") + "|" + l.armor.map((t) => t.join(",")).join(" ");
+  const all = new Map();
+  found.concat(list).forEach((l) => { const k = key(l); if (!all.has(k) || all.get(k).score < l.score) all.set(k, l); });
+  const before = found.length ? found[0].score : -Infinity;
+  found = [...all.values()].sort((x, y) => y.score - x.score).slice(0, 5);
+  setLayouts(found, true);
+  if (found[0].score > before) saveBest();
+  return true;
+}
+function showProgress() {
+  if (!run) return;
+  const elapsed = (Date.now() - run.t0) / 1000;
+  const doneNow = run.doneBefore + pool.reduce((a, p) => a + (p.prog ? p.prog.done : 0), 0);
+  const best = found.length ? found[0].score : null;
+  let frac = null;
+  if (run.timeLimit) frac = elapsed / run.timeLimit;
+  else if (run.restarts) frac = doneNow / run.restarts;
+  else if (!run.rounds) frac = Math.max(0, ...pool.map((p) => (p.prog && p.prog.frac) || 0));
+  $("barFill").style.width = frac == null ? "100%" : (Math.min(1, frac) * 100).toFixed(1) + "%";
+  const total = run.restarts ? `/${run.restarts}` : "";
+  const cores = `${pool.length} core${pool.length > 1 ? "s" : ""}`;
+  const round = run.rounds ? ` | round ${run.round}` : "";
+  $("progressText").textContent = `Restart ${doneNow}${total} on ${cores}${round}` + (best != null ? ` | best score ${best.toFixed(1)}` : "") + ` | ${elapsed.toFixed(0)}s elapsed`;
+}
+function handle(m, slot) {
   switch (m.type) {
-    case "status": $("status").textContent = m.msg; break;
+    case "status": if (!running) $("status").textContent = m.msg; break;
     case "ready":
-      workerReady = true;
+      slot.ready = true;
       if (!running) { $("status").textContent = "Ready"; $("startBtn").disabled = false; }
       break;
-    case "log": $("status").textContent = m.msg; break;
-    case "progress": {
-      if (m.frac != null) $("barFill").style.width = (m.frac * 100).toFixed(1) + "%";
-      else $("barFill").style.width = "100%";
-      const best = m.best != null ? ` | best score ${m.best.toFixed(1)}` : "";
-      const total = m.restarts ? `/${m.restarts}` : "";
-      $("progressText").textContent = `Restart ${m.done}${total}${best} | ${m.elapsed.toFixed(0)}s elapsed`;
-      $("status").textContent = "Searching...";
-      break;
-    }
-    case "best":
-      setLayouts(m.layouts, true);
-      break;
+    case "log": if (slot === pool[0]) $("status").textContent = m.msg; break;
+    case "progress": slot.prog = m; if (running) { $("status").textContent = "Searching..."; showProgress(); } break;
+    case "best": mergeLayouts(m.layouts); showProgress(); break;
     case "done":
-      setLayouts(m.layouts, false);
-      $("barFill").style.width = "100%";
-      $("status").textContent = `Finished: ${m.reason}`;
-      if (m.odds) $("oddsBox").textContent = "Learned move odds: " + Object.entries(m.odds).map(([k, v]) => `${k} ${(v * 100).toFixed(0)}%`).join(", ");
-      setIdleUi();
+      mergeLayouts(m.layouts);
+      if (m.odds) slot.odds = m.odds;
+      slot.finished = true;
+      if (run && pool.every((p) => p.finished)) roundFinished();
       break;
     case "error": showError(m.message); break;
   }
+}
+function startRound() {
+  const r = run;
+  r.round += 1;
+  const cfg = buildConfig();
+  const seeds = (r.round === 1 ? r.firstSeeds : found.map((l) => l.state)).filter(Boolean).slice(0, 6);
+  pool.forEach((p, i) => {
+    p.prog = null; p.finished = false;
+    const search = Object.assign({}, cfg.search);
+    search.seed = (Math.round(cfg.search.seed) || 1) * 1000 + r.round * 37 + i * 7919;
+    if (r.rounds) {
+      search.time_limit = r.timeLimit ? Math.max(1, Math.min(ROUND_SECONDS, r.timeLimit - (Date.now() - r.t0) / 1000)) : ROUND_SECONDS;
+      search.restarts = 0;
+    } else if (r.restarts) {
+      search.restarts = Math.floor(r.restarts / pool.length) + (i < r.restarts % pool.length ? 1 : 0);
+      if (!search.restarts) { p.finished = true; return; }
+    }
+    p.w.postMessage({ type: "start", cfg: Object.assign({}, cfg, { search, seed_states: seeds }) });
+  });
+  if (pool.every((p) => p.finished)) roundFinished();
+}
+function roundFinished() {
+  const r = run;
+  if (!r) return;
+  r.doneBefore += pool.reduce((a, p) => a + (p.prog ? p.prog.done : 0), 0);
+  pool.forEach((p) => { p.prog = null; });
+  const elapsed = (Date.now() - r.t0) / 1000;
+  if (r.rounds && (!r.timeLimit || elapsed < r.timeLimit - 1)) { startRound(); return; }
+  const odds = (pool.find((p) => p.odds) || {}).odds;
+  setLayouts(found, false);
+  $("barFill").style.width = "100%";
+  $("progressText").textContent = `${r.doneBefore} restarts on ${pool.length} core${pool.length > 1 ? "s" : ""}` + (found.length ? ` | best score ${found[0].score.toFixed(1)}` : "") + ` | ${elapsed.toFixed(0)}s`;
+  $("status").textContent = r.timeLimit && r.rounds ? "Finished: time limit reached" : "Finished";
+  if (odds) $("oddsBox").textContent = "Learned move odds: " + Object.entries(odds).map(([k, v]) => `${k} ${(v * 100).toFixed(0)}%`).join(", ");
+  updateSavedNote();
+  setIdleUi();
 }
 function buildConfig() {
   const rows = cfgState.hull.split("\n").map((r) => r.trim()).filter(Boolean);
   return {
     hull: rows, settings: cfgState.settings, priority_range: cfgState.priority_range,
     combat_range: cfgState.combat_range, place_bonus_rooms: cfgState.place_bonus_rooms,
-    rooms: cfgState.rooms.map((r) => { const c = catOf(r.cat); return { name: r.name || c.label, cat: c.id, catLabel: c.label, kind: c.kind, w: r.w, h: r.h, count: r.count, armor: c.kind === "priority" || c.kind === "combat" ? (r.armor || "") : "" }; }),
+    rooms: cfgState.rooms.map((r) => { const c = catOf(r.cat); return { name: r.name || c.label, short: r.short || "", cat: c.id, catLabel: c.label, kind: c.kind, w: r.w, h: r.h, count: r.count, armor: c.kind === "priority" || c.kind === "combat" ? (r.armor || "") : "" }; }),
     resource_anywhere: cfgState.resource_anywhere, search: cfgState.search,
   };
 }
@@ -446,21 +552,34 @@ function start() {
   $("oddsBox").textContent = "";
   $("barFill").style.width = "0";
   $("progressText").textContent = "";
+  const sc = cfgState.search;
+  const resume = $("resume").checked && !$("resume").disabled;
+  found = resume ? found.filter((l) => l.state) : [];
+  if (!resume) { layouts = []; $("altTabs").hidden = true; }
+  ensurePool(wantedCores());
   running = true;
+  run = {
+    t0: Date.now(), round: 0, doneBefore: 0,
+    timeLimit: Math.max(0, +sc.time_limit || 0), restarts: Math.max(0, Math.round(+sc.restarts || 0)),
+    rounds: !(+sc.restarts) && !(+sc.stagnation),            // rounds share results between cores
+    firstSeeds: resume ? loadSavedBest() : [],
+  };
   $("startBtn").disabled = true;
   $("stopBtn").disabled = false;
-  $("status").textContent = "Starting...";
-  worker.postMessage({ type: "start", cfg: buildConfig() });
+  $("status").textContent = `Starting on ${pool.length} core${pool.length > 1 ? "s" : ""}...`;
+  startRound();
 }
 function stop() {
-  // The optimizer is a long synchronous Python loop, so the reliable way to stop it is to end the worker.
-  // The best layouts reported so far stay on screen.
-  worker.terminate();
+  // The optimizer is a long synchronous Python loop, so the reliable way to stop it is to end the workers.
+  // The best layouts found so far stay on screen and are saved for "Continue".
+  pool.forEach((p) => p.w.terminate());
+  pool = [];
   $("status").textContent = "Stopped. Restarting Python runtime...";
   $("progressText").textContent += " (stopped)";
+  updateSavedNote();
   setIdleUi();
   $("startBtn").disabled = true;
-  newWorker();
+  ensurePool(1);
 }
 
 // ---------------------------------------------------------------- results
@@ -489,6 +608,7 @@ function roomColor(r) {
 }
 // short label drawn on a room: initials of its name ("Mining Laser" -> "ML", "Reactor" -> "Re")
 function roomShort(r) {
+  if (r.short) return r.w === 1 ? r.short[0] : r.short.slice(0, r.w >= 3 ? 4 : 3);
   const base = r.label || r.name.replace(/\s*#\d+$/, "");
   const words = base.split(/[\s/_-]+/).filter(Boolean);
   if (!words.length) return r.sym;
@@ -598,4 +718,12 @@ $("copyCoords").onclick = async () => {
 };
 buildAll();
 buildShipFinder();
-newWorker();
+GameRooms.load().then((n) => {
+  if (!n) return;
+  GameRooms.fillDatalist($("gameRoomNames"));
+  cfgState.rooms.forEach((r) => { const g = GameRooms.find(r.name); if (g && !r.short) r.short = g.short; });
+  $("roomLibNote").textContent = `Type a room name to use one of ${n} game rooms (real size and type filled in automatically; list from ${GameRooms.updated}).`;
+  buildRooms();
+});
+updateSavedNote();
+ensurePool(1);

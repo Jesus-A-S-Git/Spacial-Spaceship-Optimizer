@@ -136,7 +136,7 @@ def categorized_rooms(rows):
             except StopIteration:
                 raise ValueError(f"Too many non-combat / resource room rows (at most {len(NC_SYMBOLS)}).")
             groups[kind].append((name, sym, w, h, c))
-        info = dict(name=name, cat=str(row.get("cat", kind)), catLabel=str(row.get("catLabel", kind)), kind=kind)
+        info = dict(name=name, short=str(row.get("short") or "")[:4], cat=str(row.get("cat", kind)), catLabel=str(row.get("catLabel", kind)), kind=kind)
         order[kind].extend(dict(info, n=j + 1, of=c) for j in range(c))
     meta = order["priority"] + order["combat"] + order["noncombat"] + order["resource"]
     return groups, meta
@@ -183,7 +183,7 @@ def layout_json(m, res):
         if meta:
             md = meta[r]
             n = md["name"] + (f" #{md['n']}" if md["of"] > 1 else "")
-            extra = dict(center=r in getattr(m, "CENTER_IDX", ()), label=md["name"], cat=md["cat"], catLabel=md["catLabel"], kind=md["kind"])
+            extra = dict(center=r in getattr(m, "CENTER_IDX", ()), label=md["name"], short=md.get("short", ""), cat=md["cat"], catLabel=md["catLabel"], kind=md["kind"])
         rooms.append(dict(extra, name=n, sym=sym, w=w, h=h, x=x, y=y, combat=bool(comb),
                           priority=r in m.PRIORITY_SET,
                           armor=touch.get(r, 0) if comb else None,
@@ -211,7 +211,8 @@ def layout_json(m, res):
     )
     res_tiles = sorted([list(t) for t in getattr(m, "RES_TILES", ())], key=lambda t: (t[1], t[0]))
     cp = info.get("center_point") if getattr(m, "CENTER_IDX", None) else None
-    return dict(score=score, width=m.W, height=m.H, combat_center=list(cp) if cp else None, resource_tiles=res_tiles, grid=["".join(row) for row in g],
+    state = dict(pos=[list(p) for p in st["pos"]], lifts=[list(l) for l in st["lifts"]], vents=[list(v) for v in st["vents"]])
+    return dict(score=score, width=m.W, height=m.H, state=state, combat_center=list(cp) if cp else None, resource_tiles=res_tiles, grid=["".join(row) for row in g],
                 rooms=rooms, bonus=bonus, lifts=[list(l) for l in st["lifts"]],
                 vents=[list(v) for v in st["vents"]], armor=sorted([list(t) for t in info["armor"]], key=lambda t: (t[1], t[0])),
                 legend=legend, stats=stats)
@@ -286,15 +287,41 @@ def run(cfg_json, source_path, emit_fn):
     population = []
     best = None
     best_score = float("-inf")
-    weights = list(m.OP_WEIGHTS)
-    att_tot, succ_tot = [0.0] * m.NOPS, [0.0] * m.NOPS
-    reason = "finished"
 
     def top_layouts():
         if best is None:
             return []
         others = sorted((p for p in population if p[1][2]["state"] != best[2]["state"]), key=lambda p: -p[0])
         return [layout_json(m, best)] + [layout_json(m, r) for _, r in others[:4]]
+
+    # Starting layouts handed in by the page (previous run's best, or another core's best). Ones that do
+    # not fit the current hull / room list are skipped.
+    used = 0
+    for sd in cfg.get("seed_states") or []:
+        try:
+            st = dict(pos=[tuple(int(v) for v in p) for p in sd["pos"]],
+                      lifts=[tuple(int(v) for v in l) for l in sd["lifts"]],
+                      vents=[tuple(int(v) for v in vt) for vt in sd["vents"]])
+            if len(st["pos"]) != m.NR:
+                continue
+            score, res = m.score_state(st)
+        except _Stop:
+            break
+        except Exception:
+            continue
+        if not res:
+            continue
+        used += 1
+        population = m.add_population(population, (score, res), pop_size)
+        if score > best_score:
+            best, best_score = res, score
+            best_box[0] = score
+    if used:
+        emit(dict(type="log", msg=f"Continuing from {used} saved layout{'s' if used > 1 else ''}."))
+        emit(dict(type="best", score=best_score, layouts=top_layouts(), restart=0))
+    weights = list(m.OP_WEIGHTS)
+    att_tot, succ_tot = [0.0] * m.NOPS, [0.0] * m.NOPS
+    reason = "finished"
 
     while True:
         if restarts and done[0] >= restarts:
