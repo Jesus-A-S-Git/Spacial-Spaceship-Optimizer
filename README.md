@@ -33,6 +33,22 @@ The driver only needs the `# ---- END CONFIG -` marker line and the config const
 Hull rows may use `x` (usable), `r` (resource space, only resource rooms go there) and `.` (outside).
 The optional `--top50` and `--learn` (numpy) modes of the optimizer are command-line only and are not used by the web page.
 
+## Rooms
+
+All rooms live in one list (Settings > Rooms). Each room has a name, a type, width, height, quantity and
+an optional armor sweet spot (e.g. `4-6`; empty = the default for its kind). The type decides how the
+optimizer treats it:
+
+| Kind | Types | Behaviour |
+|---|---|---|
+| Priority | Reactor, Shield generator, Other priority | gets the most armor |
+| Combat | Laser, Anti-air, Missile, Hangar, Utility, Other combat | armored, linked for crew travel |
+| Non-combat | Bedroom, Other non-combat | kept away from armor and lifts |
+| Resource | Resource | placed on `r` hull tiles |
+
+Results show each room in its type's colour, labelled with the initials of its name, and the coordinates
+table lists the type. Types and colours are defined in `ROOM_CATEGORIES` in `js/app.js`.
+
 ## Ship hulls
 
 In **Settings > Hull > Find a ship hull**, type part of a ship name, pick one from the list (or use the

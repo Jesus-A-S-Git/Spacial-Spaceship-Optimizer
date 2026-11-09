@@ -68,3 +68,22 @@ input[type=search]:focus, textarea:focus, input:focus { outline: none; border-co
 .previewname { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
 label.filebtn { display: inline-block; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 3px 8px; font-size: 12px; cursor: pointer; }
 label.filebtn:hover { border-color: var(--accent); }
+select { background: #0c111b; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 6px; font: inherit; min-width: 0; }
+.kindhead { margin: 12px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--accent); }
+.roomcard { background: var(--panel2); border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: 6px; padding: 6px 8px; margin-bottom: 6px; }
+.roomcard.off { opacity: .55; }
+.rc-top { display: flex; gap: 6px; align-items: center; }
+.rc-top input { flex: 1.2; min-width: 0; }
+.rc-top select { flex: 1.25; }
+button.icon { flex: none; width: 26px; padding: 3px 0; text-align: center; }
+.rc-nums { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 6px; align-items: end; }
+.rc-nums label { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--muted); min-width: 0; }
+.rc-nums input { min-width: 0; padding: 4px 6px; }
+.rc-note { align-self: center; font-size: 11px; }
+input.invalid { border-color: var(--bad); }
+.roomsummary { margin: 6px 0; }
+.roomsummary .bad { color: #ffb86b; }
+.chips, .addchips { display: flex; flex-wrap: wrap; gap: 5px; margin: 4px 0; }
+.chip { background: var(--panel2); border-radius: 10px; padding: 1px 8px; font-size: 12px; }
+.chip i, .addchip i, .typecell i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: 0; }
+td.typecell { white-space: nowrap; }

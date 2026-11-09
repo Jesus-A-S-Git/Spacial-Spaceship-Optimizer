@@ -12,10 +12,22 @@ const DEFAULTS = {
     "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.",
     ".xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.",
   ].join("\n"),
-  priority_rooms: [[3, 2, 4]],
-  combat_rooms: [[2, 2, 6], [3, 2, 6], [4, 2, 2], [5, 2, 0]],
-  noncombat_rooms: [["Bedroom", "X", 3, 2, 9]],
-  resource_rooms: [],
+  // One list for every room. cat = a category from ROOM_CATEGORIES (its kind decides how the optimizer
+  // treats the room); armor = "" for the default sweet spot or "low-high" for this room's own.
+  rooms: [
+    { name: "Reactor", cat: "reactor", w: 3, h: 2, count: 3, armor: "" },
+    { name: "Shield Generator", cat: "shield", w: 3, h: 2, count: 1, armor: "" },
+    { name: "Laser", cat: "laser", w: 2, h: 2, count: 2, armor: "" },
+    { name: "Mining Laser", cat: "laser", w: 3, h: 2, count: 2, armor: "" },
+    { name: "Anti-air", cat: "antiair", w: 2, h: 2, count: 2, armor: "" },
+    { name: "Missile Launcher", cat: "missile", w: 3, h: 2, count: 2, armor: "" },
+    { name: "Fighter Hangar", cat: "hangar", w: 4, h: 2, count: 1, armor: "" },
+    { name: "Android Studio", cat: "utility", w: 2, h: 2, count: 2, armor: "" },
+    { name: "Cloak", cat: "utility", w: 3, h: 2, count: 1, armor: "" },
+    { name: "Engine", cat: "utility", w: 3, h: 2, count: 1, armor: "" },
+    { name: "Freeze Ray", cat: "combat", w: 4, h: 2, count: 1, armor: "" },
+    { name: "Bedroom", cat: "crew", w: 3, h: 2, count: 9, armor: "" },
+  ],
   resource_anywhere: true,
   place_bonus_rooms: true,
   priority_range: [3, 6],
@@ -32,6 +44,30 @@ const DEFAULTS = {
   },
   search: { iters: 1200, polish: 300, restarts: 0, time_limit: 300, seed: 1, stagnation: 0, population: 24 },
 };
+
+// Room categories. kind = how the optimizer treats the room:
+//   priority  = gets the most armor (PRIORITY_WEIGHT) and its own sweet spot
+//   combat    = armored, walkable, counted for crew travel
+//   noncombat = kept away from armor and lifts
+//   resource  = goes on r tiles in the hull (or x tiles if allowed), scored like non-combat
+// Sizes are only starting suggestions for the "+ Add" buttons; edit them to match your rooms.
+const ROOM_CATEGORIES = [
+  { id: "reactor", label: "Reactor", kind: "priority", color: "#d94b4b", size: [3, 2] },
+  { id: "shield", label: "Shield generator", kind: "priority", color: "#e07a9c", size: [3, 2] },
+  { id: "priority", label: "Other priority", kind: "priority", color: "#b03a5b", size: [3, 2] },
+  { id: "laser", label: "Laser", kind: "combat", color: "#3d6fd1", size: [2, 2] },
+  { id: "antiair", label: "Anti-air", kind: "combat", color: "#8466d8", size: [2, 2] },
+  { id: "missile", label: "Missile", kind: "combat", color: "#d98a3d", size: [3, 2] },
+  { id: "hangar", label: "Hangar", kind: "combat", color: "#3f8f9f", size: [4, 2] },
+  { id: "utility", label: "Utility", kind: "combat", color: "#8a90a6", size: [2, 2] },
+  { id: "combat", label: "Other combat", kind: "combat", color: "#5b7fbf", size: [2, 2] },
+  { id: "crew", label: "Bedroom", kind: "noncombat", color: "#9b4f7f", size: [3, 2] },
+  { id: "noncombat", label: "Other non-combat", kind: "noncombat", color: "#b5934a", size: [2, 2] },
+  { id: "resource", label: "Resource", kind: "resource", color: "#3b6fa0", size: [2, 2] },
+];
+const KIND_LABELS = { priority: "Priority (most armor)", combat: "Combat", noncombat: "Non-combat", resource: "Resource space" };
+const CAT = Object.fromEntries(ROOM_CATEGORIES.map((c) => [c.id, c]));
+const catOf = (id) => CAT[id] || CAT.combat;
 
 const STRUCTURE_FIELDS = [
   ["ARMOR_COUNT", "Armor tiles"], ["MIN_LIFTS", "Min lifts"], ["MAX_LIFTS", "Max lifts"],
@@ -76,10 +112,20 @@ function loadSettings() {
     const raw = localStorage.getItem(STORE_KEY);
     if (raw) {
       const s = JSON.parse(raw), d = clone(DEFAULTS);
+      if (!Array.isArray(s.rooms) && (s.priority_rooms || s.combat_rooms || s.noncombat_rooms || s.resource_rooms)) s.rooms = migrateRooms(s);
       return Object.assign(d, s, { settings: Object.assign(d.settings, s.settings || {}), search: Object.assign(d.search, s.search || {}) });
     }
   } catch (e) { /* storage blocked or corrupt: fall back to defaults */ }
   return clone(DEFAULTS);
+}
+function migrateRooms(s) {
+  // settings saved by the older page (one table per kind) -> one categorized list
+  const out = [];
+  (s.priority_rooms || []).forEach(([w, h, c]) => out.push({ name: `Priority ${w}x${h}`, cat: "priority", w, h, count: c, armor: "" }));
+  (s.combat_rooms || []).forEach(([w, h, c]) => out.push({ name: `Combat ${w}x${h}`, cat: "combat", w, h, count: c, armor: "" }));
+  (s.noncombat_rooms || []).forEach(([n, , w, h, c]) => out.push({ name: n, cat: /bed|crew/i.test(n) ? "crew" : "noncombat", w, h, count: c, armor: "" }));
+  (s.resource_rooms || []).forEach(([n, , w, h, c]) => out.push({ name: n, cat: "resource", w, h, count: c, armor: "" }));
+  return out;
 }
 function saveSettings() {
   try { localStorage.setItem(STORE_KEY, JSON.stringify(cfgState)); } catch (e) { /* ignore */ }
@@ -110,7 +156,7 @@ function buildHull() {
     const all = rows.join(""), tiles = all.split("x").length - 1, res = all.split("r").length - 1;
     $("hullInfo").textContent = ok ? `${rows[0].length} x ${rows.length}, ${tiles + res} usable tiles` + (res ? ` (${res} resource space)` : "") : "Invalid: rows must be equal length and use only x, r and .";
   };
-  t.addEventListener("input", upd); upd();
+  t.addEventListener("input", () => { upd(); if ($("roomSummary").childElementCount) updateRoomSummary(); }); upd();
 }
 
 // ---------------------------------------------------------------- ship hull picker (js/hulls.js)
@@ -197,48 +243,117 @@ function buildShipFinder() {
   };
 }
 
-function buildRoomRows(key, containerId, fields) {
-  const box = $(containerId);
-  box.innerHTML = "";
-  cfgState[key].forEach((row, ri) => {
-    const r = el("div", { class: "row" });
-    fields.forEach((f, ci) => {
-      const inp = el("input", { type: f.text ? "text" : "number", min: "0", placeholder: f.label, title: f.label });
-      if (f.text) inp.maxLength = f.max || 40;
-      inp.value = row[ci];
-      inp.style.flex = f.flex || "1";
-      inp.addEventListener("change", () => {
-        if (f.text) row[ci] = inp.value; else { const n = parseInt(inp.value, 10); row[ci] = isNaN(n) ? 0 : Math.max(0, n); inp.value = row[ci]; }
-        saveSettings();
-      });
-      r.append(inp);
-    });
-    const del = el("button", { class: "small", text: "x", title: "Remove" });
-    del.addEventListener("click", () => { cfgState[key].splice(ri, 1); saveSettings(); buildRoomRows(key, containerId, fields); });
-    r.append(del);
-    box.append(r);
-  });
+// ---------------------------------------------------------------- rooms (one categorized list)
+function intInput(value, title, onChange) {
+  const i = el("input", { type: "number", min: "0", step: "1", title, "aria-label": title });
+  i.value = value;
+  i.addEventListener("change", () => { const n = parseInt(i.value, 10); onChange(isNaN(n) ? 0 : Math.max(0, n)); i.value = isNaN(n) ? 0 : Math.max(0, n); });
+  return i;
 }
-const ROOM_TABLES = {
-  priorityRooms: ["priority_rooms", [{ label: "width" }, { label: "height" }, { label: "count" }], [3, 2, 1]],
-  combatRooms: ["combat_rooms", [{ label: "width" }, { label: "height" }, { label: "count" }], [2, 2, 1]],
-  noncombatRooms: ["noncombat_rooms", [{ label: "name", text: true, flex: "3" }, { label: "symbol", text: true, max: 1, flex: "1" }, { label: "width" }, { label: "height" }, { label: "count" }], ["Cargo Bay", "C", 4, 2, 1]],
-  resourceRooms: ["resource_rooms", [{ label: "name", text: true, flex: "3" }, { label: "symbol", text: true, max: 1, flex: "1" }, { label: "width" }, { label: "height" }, { label: "count" }], ["Storage", "S", 3, 2, 1]],
-};
-function buildRooms() {
-  for (const [id, [key, fields]] of Object.entries(ROOM_TABLES)) buildRoomRows(key, id, fields);
-  document.querySelectorAll("[data-add]").forEach((b) => {
-    b.onclick = () => {
-      const [key, fields, blank] = ROOM_TABLES[b.dataset.add];
-      cfgState[key].push(clone(blank)); saveSettings(); buildRoomRows(key, b.dataset.add, fields);
-    };
+function categorySelect(value, onChange) {
+  const sel = el("select", { title: "Room type", "aria-label": "Room type" });
+  for (const kind of Object.keys(KIND_LABELS)) {
+    const g = el("optgroup", { label: KIND_LABELS[kind] });
+    ROOM_CATEGORIES.filter((c) => c.kind === kind).forEach((c) => g.append(el("option", { value: c.id, text: c.label })));
+    sel.append(g);
+  }
+  sel.value = catOf(value).id;
+  sel.addEventListener("change", () => onChange(sel.value));
+  return sel;
+}
+function validArmor(v) { return !v || /^\s*\d+\s*-\s*\d+\s*$/.test(v) && (([a, b]) => +a <= +b)(v.split("-")); }
+function roomCard(room, idx) {
+  const cat = catOf(room.cat);
+  const card = el("div", { class: "roomcard", "data-idx": String(idx) });
+  card.style.borderLeftColor = cat.color;
+  const name = el("input", { type: "text", maxlength: "40", placeholder: "Room name", title: "Room name", "aria-label": "Room name" });
+  name.value = room.name;
+  name.addEventListener("change", () => { room.name = name.value.trim(); saveSettings(); });
+  const sel = categorySelect(room.cat, (v) => {
+    const oldLabel = catOf(room.cat).label;
+    room.cat = v;
+    if (!room.name || room.name === oldLabel) room.name = catOf(v).label;
+    saveSettings(); buildRooms();
   });
+  const up = el("button", { class: "small icon", text: "↑", title: "Move up", "aria-label": "Move up" });
+  // move up within its own group (priority / combat / ...), which is how the list is shown
+  const prev = cfgState.rooms.map((r, i) => i).filter((i) => i < idx && catOf(cfgState.rooms[i].cat).kind === cat.kind).pop();
+  up.disabled = prev === undefined;
+  up.onclick = () => { const r = cfgState.rooms; [r[prev], r[idx]] = [r[idx], r[prev]]; saveSettings(); buildRooms(); };
+  const dup = el("button", { class: "small icon", text: "⧉", title: "Duplicate", "aria-label": "Duplicate" });
+  dup.onclick = () => { cfgState.rooms.splice(idx + 1, 0, clone(room)); saveSettings(); buildRooms(); };
+  const del = el("button", { class: "small icon", text: "×", title: "Remove", "aria-label": "Remove" });
+  del.onclick = () => { cfgState.rooms.splice(idx, 1); saveSettings(); buildRooms(); };
+  card.append(el("div", { class: "rc-top" }, name, sel, up, dup, del));
+
+  const nums = el("div", { class: "rc-nums" });
+  const field = (label, input) => nums.append(el("label", {}, el("span", { text: label }), input));
+  field("Width", intInput(room.w, "Width (tiles)", (n) => { room.w = n; saveSettings(); updateRoomSummary(); }));
+  field("Height", intInput(room.h, "Height (tiles)", (n) => { room.h = n; saveSettings(); updateRoomSummary(); }));
+  field("Qty", intInput(room.count, "How many", (n) => { room.count = n; saveSettings(); updateRoomSummary(); card.classList.toggle("off", !n); }));
+  if (cat.kind === "priority" || cat.kind === "combat") {
+    const def = cat.kind === "priority" ? cfgState.priority_range : cfgState.combat_range;
+    const ar = el("input", { type: "text", placeholder: `${def[0]}-${def[1]}`, title: "Armor sweet spot for this room, e.g. 4-6. Empty = the default for its kind.", "aria-label": "Armor sweet spot" });
+    ar.value = room.armor || "";
+    ar.addEventListener("change", () => {
+      const v = ar.value.trim();
+      ar.classList.toggle("invalid", !validArmor(v));
+      if (validArmor(v)) { room.armor = v; saveSettings(); }
+    });
+    field("Armor", ar);
+  } else {
+    nums.append(el("div", { class: "rc-note muted", text: cat.kind === "resource" ? "on r tiles" : "no armor" }));
+  }
+  card.append(nums);
+  card.classList.toggle("off", !room.count);
+  return card;
+}
+function updateRoomSummary() {
+  const tot = { priority: [0, 0], combat: [0, 0], noncombat: [0, 0], resource: [0, 0] };
+  const byCat = {};
+  cfgState.rooms.forEach((r) => {
+    const c = catOf(r.cat), n = r.count || 0;
+    tot[c.kind][0] += n; tot[c.kind][1] += n * r.w * r.h;
+    if (n) byCat[c.id] = (byCat[c.id] || 0) + n;
+  });
+  const hullTiles = (cfgState.hull.match(/[xr]/g) || []).length;
+  const used = Object.values(tot).reduce((a, [, t]) => a + t, 0) + (cfgState.settings.ARMOR_COUNT || 0);
+  const box = $("roomSummary");
+  box.innerHTML = "";
+  const chips = el("div", { class: "chips" });
+  ROOM_CATEGORIES.forEach((c) => { if (byCat[c.id]) chips.append(el("span", { class: "chip" }, el("i", { style: `background:${c.color}` }), document.createTextNode(`${c.label} ${byCat[c.id]}`))); });
+  box.append(chips);
+  const parts = Object.entries(tot).filter(([, [n]]) => n).map(([k, [n, t]]) => `${KIND_LABELS[k].split(" (")[0]} ${n} (${t} tiles)`);
+  box.append(el("div", { class: "muted" + (used > hullTiles ? " bad" : ""), text:
+    `${parts.join(" · ") || "No rooms"}. Rooms + ${cfgState.settings.ARMOR_COUNT || 0} armor = ${used} of ${hullTiles} hull tiles` + (used > hullTiles ? " (too many!)" : "") }));
+}
+function buildRooms() {
+  const box = $("roomList");
+  box.innerHTML = "";
+  for (const kind of Object.keys(KIND_LABELS)) {
+    const idxs = cfgState.rooms.map((r, i) => [r, i]).filter(([r]) => catOf(r.cat).kind === kind);
+    if (!idxs.length) continue;
+    box.append(el("div", { class: "kindhead", text: KIND_LABELS[kind] }));
+    idxs.forEach(([r, i]) => box.append(roomCard(r, i)));
+  }
+  const add = $("roomAdd");
+  add.innerHTML = "";
+  ROOM_CATEGORIES.forEach((c) => {
+    const b = el("button", { class: "small addchip", title: `Add a ${c.label} room (${c.size[0]}x${c.size[1]})` }, el("i", { style: `background:${c.color}` }), document.createTextNode("+ " + c.label));
+    b.onclick = () => {
+      cfgState.rooms.push({ name: c.label, cat: c.id, w: c.size[0], h: c.size[1], count: 1, armor: "" });
+      saveSettings(); buildRooms();
+      const card = $("roomList").querySelector(`.roomcard[data-idx="${cfgState.rooms.length - 1}"]`);
+      if (card) { card.scrollIntoView({ block: "nearest" }); const n = card.querySelector("input"); n.focus(); n.select(); }
+    };
+    add.append(b);
+  });
+  updateRoomSummary();
   $("placeBonus").checked = cfgState.place_bonus_rooms;
   $("placeBonus").onchange = (e) => { cfgState.place_bonus_rooms = e.target.checked; saveSettings(); };
   $("resAnywhere").checked = cfgState.resource_anywhere;
   $("resAnywhere").onchange = (e) => { cfgState.resource_anywhere = e.target.checked; saveSettings(); };
 }
-
 function buildGrid(containerId, fields, store, step) {
   const box = $(containerId);
   box.innerHTML = "";
@@ -248,6 +363,7 @@ function buildGrid(containerId, fields, store, step) {
 }
 function buildStructure() {
   buildGrid("structure", STRUCTURE_FIELDS, cfgState.settings);
+  $("structure").addEventListener("change", () => { updateRoomSummary(); });
   const box = $("structure");
   [["priority_range", "Priority armor sweet spot (low)", 0], ["priority_range", "Priority armor sweet spot (high)", 1],
    ["combat_range", "Combat armor sweet spot (low)", 0], ["combat_range", "Combat armor sweet spot (high)", 1]].forEach(([k, label, i]) => {
@@ -319,8 +435,7 @@ function buildConfig() {
   return {
     hull: rows, settings: cfgState.settings, priority_range: cfgState.priority_range,
     combat_range: cfgState.combat_range, place_bonus_rooms: cfgState.place_bonus_rooms,
-    priority_rooms: cfgState.priority_rooms, combat_rooms: cfgState.combat_rooms,
-    noncombat_rooms: cfgState.noncombat_rooms, resource_rooms: cfgState.resource_rooms,
+    rooms: cfgState.rooms.map((r) => { const c = catOf(r.cat); return { name: r.name || c.label, cat: c.id, catLabel: c.label, kind: c.kind, w: r.w, h: r.h, count: r.count, armor: c.kind === "priority" || c.kind === "combat" ? (r.armor || "") : "" }; }),
     resource_anywhere: cfgState.resource_anywhere, search: cfgState.search,
   };
 }
@@ -363,15 +478,20 @@ function renderTabs() {
     box.append(b);
   });
 }
-const PALETTE = ["#d17ad9", "#e0b84a", "#59c7a0", "#6ad1e0", "#c4c9d4", "#ff9f6b"];
-function roomColor(sym, combat, priority) {
-  if (priority || sym === "P") return "#d94b4b";
-  if (sym === "x") return "#3f9b57";
-  if (sym === "X") return "#9b4fb3";
-  const digit = { 2: "#3d6fd1", 3: "#4a86e0", 4: "#2f5cb0", 5: "#5b9be6" }[sym];
-  if (digit) return digit;
-  let h = 0; for (const c of sym) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  return combat ? "#3d6fd1" : PALETTE[h % PALETTE.length];
+const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+// colour of a room in the result picture: its category colour (older results without categories: by kind)
+function roomColor(r) {
+  if (r.cat && CAT[r.cat]) return CAT[r.cat].color;
+  if (r.priority) return CAT.reactor.color;
+  return r.combat ? CAT.combat.color : CAT.noncombat.color;
+}
+// short label drawn on a room: initials of its name ("Mining Laser" -> "ML", "Reactor" -> "Re")
+function roomShort(r) {
+  const base = r.label || r.name.replace(/\s*#\d+$/, "");
+  const words = base.split(/[\s/_-]+/).filter(Boolean);
+  if (!words.length) return r.sym;
+  const t = words.length > 1 ? words.slice(0, 3).map((w) => w[0].toUpperCase()).join("") : words[0].slice(0, 2);
+  return r.w === 1 ? t[0] : t;
 }
 const TILE = 26;
 function layoutSvg(l) {
@@ -386,8 +506,8 @@ function layoutSvg(l) {
     `<g><title>${tip}</title><rect x="${r.x * T + 1}" y="${r.y * T + 1}" width="${r.w * T - 2}" height="${r.h * T - 2}" rx="3" fill="${fill}" stroke="#0c111b" stroke-width="1.5"/>` +
     `<text x="${(r.x + r.w / 2) * T}" y="${(r.y + r.h / 2) * T + 5}" text-anchor="middle" fill="#fff" font-size="13" font-weight="600">${label}</text></g>`);
   l.rooms.forEach((r) => {
-    const tip = `${r.name} (${r.w}x${r.h}) at ${r.x}, ${r.y}` + (r.combat ? ` | armor touching: ${r.armor}` : "");
-    rect(r, roomColor(r.sym, r.combat, r.priority), r.sym, tip);
+    const tip = `${r.name}` + (r.catLabel ? ` [${r.catLabel}]` : "") + ` (${r.w}x${r.h}) at ${r.x}, ${r.y}` + (r.combat ? ` | armor touching: ${r.armor}` : "");
+    rect(r, roomColor(r), esc(roomShort(r)), esc(tip));
   });
   l.bonus.forEach((r) => rect(r, "#3f9b57", "x", `${r.name} at ${r.x}, ${r.y}`));
   l.armor.forEach(([x, y]) => p.push(`<rect x="${x * T + 2}" y="${y * T + 2}" width="${T - 4}" height="${T - 4}" fill="#e6b93c"><title>Armor ${x}, ${y}</title></rect>`));
@@ -404,8 +524,12 @@ function renderLayout() {
   $("scoreVal").textContent = l.score.toFixed(1);
 
   const legend = $("legend"); legend.innerHTML = "";
-  const items = [["#e6b93c", "Armor"], ...(l.resource_tiles && l.resource_tiles.length ? [["#24406b", "Resource space (r)"]] : []), ["#38c6d9", "Lift"], ["#f5f5f5", "Vent"], ["#3f9b57", "Bonus room"], ["#d94b4b", "Priority room (P)"]];
-  Object.entries(l.legend).forEach(([sym, name]) => { if (sym !== "P") items.push([roomColor(sym, !/non|bed|cargo|med/i.test(name) && sym !== "X", false), `${sym} = ${name}`]); });
+  const items = [];
+  const seen = new Map();
+  l.rooms.forEach((r) => { const key = r.cat || (r.priority ? "reactor" : r.combat ? "combat" : "noncombat"); seen.set(key, (seen.get(key) || 0) + 1); });
+  ROOM_CATEGORIES.forEach((c) => { if (seen.has(c.id)) items.push([c.color, `${c.label} (${seen.get(c.id)})`]); });
+  items.push(["#e6b93c", "Armor"], ["#38c6d9", "Lift"], ["#f5f5f5", "Vent"], ["#3f9b57", "Bonus room"]);
+  if (l.resource_tiles && l.resource_tiles.length) items.push(["#24406b", "Resource space (r)"]);
   items.forEach(([c, t]) => { const s = el("span"); s.innerHTML = `<i style="background:${c}"></i>`; s.append(t); legend.append(s); });
 
   const s = l.stats;
@@ -424,7 +548,7 @@ function renderLayout() {
   defs.forEach(([k, v, warn]) => sb.append(el("div", { class: "stat" + (warn ? " warn" : "") }, el("b", { text: String(v) }), document.createTextNode(k))));
 
   const t = $("inventory");
-  t.innerHTML = "<tr><th>Room</th><th>Size</th><th>x, y</th><th>Armor</th></tr>";
+  t.innerHTML = "<tr><th>Room</th><th>Type</th><th>Size</th><th>x, y</th><th>Armor</th></tr>";
   const sorted = l.rooms.map((r) => r).sort((a, b) => a.y - b.y || a.x - b.x);
   sorted.forEach((r) => {
     let armor = "", bad = false;
@@ -432,10 +556,11 @@ function renderLayout() {
       armor = String(r.armor);
       if (r.range) { armor += ` (${r.range[0]}-${r.range[1]})`; bad = r.armor < r.range[0]; }
     }
-    const tr = el("tr", {}, el("td", { text: r.name }), el("td", { text: `${r.w}x${r.h}` }), el("td", { text: `${r.x}, ${r.y}` }), el("td", { class: bad ? "bad" : "", text: armor }));
+    const typ = el("td", { class: "typecell" }, el("i", { style: `background:${roomColor(r)}` }), document.createTextNode(r.catLabel || (r.priority ? "Priority" : r.combat ? "Combat" : "Non-combat")));
+    const tr = el("tr", {}, el("td", { text: r.name }), typ, el("td", { text: `${r.w}x${r.h}` }), el("td", { text: `${r.x}, ${r.y}` }), el("td", { class: bad ? "bad" : "", text: armor }));
     t.append(tr);
   });
-  l.bonus.forEach((r) => t.append(el("tr", {}, el("td", { text: r.name }), el("td", { text: `${r.w}x${r.h}` }), el("td", { text: `${r.x}, ${r.y}` }), el("td"))));
+  l.bonus.forEach((r) => t.append(el("tr", {}, el("td", { text: r.name }), el("td", { text: "Bonus" }), el("td", { text: `${r.w}x${r.h}` }), el("td", { text: `${r.x}, ${r.y}` }), el("td"))));
 }
 function download(name, text, type) {
   const url = URL.createObjectURL(new Blob([text], { type }));
@@ -444,7 +569,7 @@ function download(name, text, type) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 function coordsText(l) {
-  const lines = l.rooms.map((r) => `${r.name} (${r.w}x${r.h}) -> ${r.x}, ${r.y}`);
+  const lines = l.rooms.map((r) => `${r.name}${r.catLabel ? " [" + r.catLabel + "]" : ""} (${r.w}x${r.h}) -> ${r.x}, ${r.y}`);
   l.bonus.forEach((r) => lines.push(`${r.name} (${r.w}x${r.h}) -> ${r.x}, ${r.y}`));
   l.lifts.forEach(([x, y0, y1]) => lines.push(`Lift column x=${x}: y ${y0}-${y1}`));
   l.vents.forEach(([x, y]) => lines.push(`Vent (1x1) -> ${x}, ${y}`));
