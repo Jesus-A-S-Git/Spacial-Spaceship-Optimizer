@@ -81,11 +81,16 @@ optimizer learned:
 * **Learned patterns** (*Search > Score with patterns learned from the top 100*): which room types top ships
   put side by side and on the hull edge (optimizer section 10, `TAG_ADJ` / `TAG_EDGE` / `W_PATTERN`), plus
   the `--top50` habits (edge use per kind, grouped non-combat rooms, lift spacing).
+* **Deck-structured starts** (*Search*, on by default): every search also starts from a few layouts built like top
+  ships - 2-high decks with a free row between them (where armor goes, touching rooms above and below), combat rooms
+  on the middle decks, non-combat rooms outside, lifts reserved first. On 16 top-100 hulls this gave every combat
+  room a connection and raised armor value from 146 to 169 from scratch; together with top-player layouts on the
+  same hull it reaches 191 against the real ships' 182.
 * **Top-player style** (*Scoring weights > Style*, the default): armor-first weights. `tools/benchmark_top.py`
   gives the optimizer the same hull, rooms and armor count as real top-100 ships and compares its best layout
   with theirs; the original weights value crew reaching every room so much that layouts end up with about
   25% less armor value than top ships. The top-player style closes most of that gap (results on the Top 100
-  page, re-measured every two weeks). Command line: `--style top` or `STYLE = "top"` (optimizer section 12).
+  page, re-measured every two weeks; armor 5, connectivity 20). Command line: `--style top` or `STYLE = "top"` (optimizer section 12).
 * **Walking** (*Armor, lifts and vents*): game-like walking, on by default. Crew walk through every room
   (optimizer `WALK_NONCOMBAT`), and Service Vents follow the game (optimizer `VENT_GAME_LINKS`, section 13, from the
   Pixel Starships wiki): vents move crew sideways only, connect to a room only where they touch its bottom row, and

@@ -36,17 +36,19 @@ const DEFAULTS = {
   walk_noncombat: true,     // crew walk through every room (as in the game), not only combat rooms
   connect_all: true,        // after each search, add vents/lifts until every combat room is reachable
   use_top: true,            // start searches from top-100 layouts on the same hull
+  deck_starts: true,        // also start from deck-structured layouts (decks with armor rows between them)
   learn_top: true,          // score with patterns and habits learned from the top 100
   style_v2: true,
   style_v3: true,
+  style_v4: true,
   priority_range: [3, 6],
   combat_range: [2, 6],
   settings: {
     ARMOR_COUNT: 45, MIN_LIFTS: 1, MAX_LIFTS: 4, START_LIFTS: 2, VENT_COUNT: 8,
     VENT_LINK_COST: 1, LIFT_COST: 2, MAX_EMPTY_RUN: 3,
-    PRIORITY_WEIGHT: 3, W_ARMOR: 4, W_UNARMORED: 250, W_PRIORITY_UNARMORED: 500, W_FLOAT: 45,
+    PRIORITY_WEIGHT: 3, W_ARMOR: 5, W_UNARMORED: 250, W_PRIORITY_UNARMORED: 500, W_FLOAT: 45,
     W_ARMOR_UNDER: 25, PRIORITY_UNDER_MULT: 2, W_ARMOR_OVER: 2,
-    W_TRAVEL: 0.75, W_CORNER: 0.4, W_DISC: 30, CORNER_UNREACHABLE: 60,
+    W_TRAVEL: 0.75, W_CORNER: 0.4, W_DISC: 20, CORNER_UNREACHABLE: 60,
     W_LIFT: 35, W_LTOUCH: 25, W_LIFT_BALANCE: 50, W_LIFT_COUNT: 18,
     W_GAP: 2.5, W_EMPTY: 6, W_RUN: 6, W_ISO: 25,
     W_SPREAD: 1.5, SPREAD_CAP: 24, W_VENT: 15, W_CENTER: 3, W_BOOST: 20, W_PATTERN: 3, W_SHELL: 3, W_NC_CLUSTER: 15, W_LIFT_DENSITY: 20,
@@ -58,7 +60,7 @@ const DEFAULTS = {
 // to the top-100 ladder ships (tools/benchmark_top.py; the optimizer's STYLE = "top" / --style top).
 // "original" = the optimizer's own weights, which value crew reaching every room much more.
 const STYLES = {
-  top: { W_ARMOR: 4, W_DISC: 30, W_TRAVEL: 0.75, W_CORNER: 0.4, W_GAP: 2.5, MIN_LIFTS: 1, MAX_LIFTS: 4, W_LIFT_COUNT: 18 },
+  top: { W_ARMOR: 5, W_DISC: 20, W_TRAVEL: 0.75, W_CORNER: 0.4, W_GAP: 2.5, MIN_LIFTS: 1, MAX_LIFTS: 4, W_LIFT_COUNT: 18 },
   original: { W_ARMOR: 1, W_DISC: 500, W_TRAVEL: 5, W_CORNER: 4, W_GAP: 12, MIN_LIFTS: 2, MAX_LIFTS: 6, W_LIFT_COUNT: 8 },
 };
 
@@ -123,6 +125,13 @@ function loadSettings() {
         const set = s.settings || {};
         if (Object.entries(STYLES.top).every(([k, v]) => +set[k] === (k === "W_DISC" ? 15 : v))) s.settings = Object.assign({}, set, { W_DISC: STYLES.top.W_DISC });
         s.style_v3 = true;
+      }
+      // one-time: previous top-player style (armor 4, connectivity 30) -> current (armor 5, connectivity 20)
+      if (!s.style_v4) {
+        const set = s.settings || {};
+        const prev = Object.assign({}, STYLES.top, { W_ARMOR: 4, W_DISC: 30 });
+        if (Object.entries(prev).every(([k, v]) => +set[k] === v)) s.settings = Object.assign({}, set, { W_ARMOR: STYLES.top.W_ARMOR, W_DISC: STYLES.top.W_DISC });
+        s.style_v4 = true;
       }
       return Object.assign(d, s, { settings: Object.assign(d.settings, s.settings || {}), search: Object.assign(d.search, s.search || {}) });
     }
@@ -471,6 +480,8 @@ function updateStyleNote() {
 function buildTopUi() {
   $("useTop").checked = cfgState.use_top;
   $("useTop").onchange = (e) => { cfgState.use_top = e.target.checked; saveSettings(); };
+  $("deckStarts").checked = cfgState.deck_starts;
+  $("deckStarts").onchange = (e) => { cfgState.deck_starts = e.target.checked; saveSettings(); };
   $("learnTop").checked = cfgState.learn_top;
   $("learnTop").onchange = (e) => { cfgState.learn_top = e.target.checked; saveSettings(); };
   $("walkNc").checked = cfgState.walk_noncombat;
@@ -631,6 +642,7 @@ function buildConfig() {
     rooms: cfgState.rooms.map((r) => { const c = catOf(r.cat); return { name: r.name || c.label, short: r.short || "", cat: c.id, catLabel: c.label, kind: c.kind, w: r.w, h: r.h, count: r.count, armor: c.kind === "priority" || c.kind === "combat" ? (r.armor || "") : "" }; }),
     resource_anywhere: cfgState.resource_anywhere, search: cfgState.search,
     walk_noncombat: cfgState.walk_noncombat, vent_game_links: cfgState.walk_noncombat, connect_all: cfgState.connect_all,
+    deck_starts: cfgState.deck_starts ? "always" : false,
     ...(cfgState.learn_top && Top100.analysis ? { patterns: Top100.analysis.patterns, top50_priors: Top100.analysis.priors } : {}),
   };
 }

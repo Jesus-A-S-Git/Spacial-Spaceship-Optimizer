@@ -256,6 +256,93 @@ def layout_json(m, res):
                 legend=legend, stats=stats)
 
 
+def deck_state(m, rng, period, offset, nlifts):
+    """A starting layout built like top ships: 2-high decks with a free row between them (where armor goes,
+    touching rooms above and below), priority/combat rooms on the middle decks, non-combat rooms on the
+    outer ones, lift columns reserved first. Rooms that do not fit a deck go anywhere, then get shoved legal."""
+    H, W = m.H, m.W
+    rows = [y for y in range(H) if any(m.free_tile(x, y) for x in range(W))]
+    if not rows:
+        return None
+    top, bot = rows[0], rows[-1]
+    mid = (top + bot) / 2
+    decks = [y for y in range(top + 1, bot + 1) if (y - top - offset) % period == 0]
+    occ, lifts = set(), []
+    xs = [x for x in range(W) if any(m.free_tile(x, y) for y in range(H))]
+    for k in range(nlifts):
+        x = xs[min(len(xs) - 1, int((k + 1) * len(xs) / (nlifts + 1)))] + rng.randint(-2, 2)
+        run = []
+        for y in range(top, bot + 1):
+            if m.free_tile(x, y):
+                run.append(y)
+            elif run:
+                break
+        if len(run) >= 2:
+            lifts.append((x, run[0], run[-1]))
+            occ.update((x, y) for y in run)
+    pos = [None] * m.NR
+    pri = {r: 0 if r in m.PRIORITY_SET else (1 if r < m.NC else 2) for r in range(m.NR)}
+    order = sorted(range(m.NR), key=lambda r: (m.ROOMS[r][3] != 2, pri[r], -m.ROOMS[r][2], rng.random()))
+
+    def fits(r, x, y):
+        w, h = m.ROOMS[r][2], m.ROOMS[r][3]
+        return m.rect_ok(x, y, w, h, r) and not any((xx, yy) in occ for yy in range(y, y + h) for xx in range(x, x + w))
+
+    def put(r, x, y):
+        pos[r] = (x, y)
+        occ.update((xx, yy) for yy in range(y, y + m.ROOMS[r][3]) for xx in range(x, x + m.ROOMS[r][2]))
+    for r in order:
+        w, h = m.ROOMS[r][2], m.ROOMS[r][3]
+        if h == 2:
+            placed = False
+            for d in sorted(decks, key=lambda d: abs(d - mid) * (1 if pri[r] < 2 else -1) + rng.random() * 0.5):
+                for x in range(W - w + 1):
+                    if fits(r, x, d - 1):
+                        put(r, x, d - 1)
+                        placed = True
+                        break
+                if placed:
+                    break
+            if placed:
+                continue
+        spots = [(x, y) for y in range(H - h + 1) for x in range(W - w + 1) if fits(r, x, y)]
+        if spots:
+            spots.sort(key=lambda t: abs(t[1] + h / 2 - mid) * (1 if pri[r] < 2 else -1))
+            put(r, *spots[0])
+        # else: left for the free-space fill below
+    placed = {r for r in range(m.NR) if pos[r] is not None}
+    base = m.init_state(rng)                           # any legal positions for rooms not yet placed
+    st = dict(pos=[pos[r] if pos[r] is not None else base["pos"][r] for r in range(m.NR)],
+              lifts=lifts[: m.MAX_LIFTS], vents=[])
+    if len(st["lifts"]) < m.MIN_LIFTS:
+        st["lifts"] = list(base["lifts"])
+    # rooms that found no deck spot go into free space; if one does not fit, give up a placed room
+    # (non-combat first) and try again - the same fill used for top-player layouts
+    release = sorted(placed, key=lambda r: (-pri[r], -m.ROOMS[r][2] * m.ROOMS[r][3]))
+    for _ in range(len(release) + 1):
+        if _fill_free(m, st, placed):
+            st = m.trim_lifts(st)
+            return st if st and m.occupancy(st) is not None else None
+        if not release:
+            break
+        placed.discard(release.pop(0))
+    return None
+
+
+def deck_states(m, rng, want=4, tries=18):
+    out = []
+    for i in range(tries):
+        if len(out) >= want:
+            break
+        try:
+            st = deck_state(m, rng, 3, i % 3, max(m.MIN_LIFTS, 1) + (i // 3) % 2)
+        except Exception:
+            st = None
+        if st:
+            out.append(st)
+    return out
+
+
 def template_state(m, tpl, rng):
     """A legal layout of the current rooms that copies a top player's room placement as far as it fits."""
     meta = getattr(m, "ROOM_META", None)
@@ -423,8 +510,17 @@ def run(cfg_json, source_path, emit_fn):
             st = None
         if st:
             tpl_states.append(st)
+    n_top = len(tpl_states)
+    if cfg.get("deck_starts") and (cfg.get("deck_starts") == "always" or not n_top):
+        try:
+            tpl_states = tpl_states + deck_states(m, random.Random(base_seed * 13 + 5))
+        except _Stop:
+            pass
+    n_deck = len(tpl_states) - n_top
     if tpl_states:
-        emit(dict(type="log", msg=f"Starting from {len(tpl_states)} top-100 layout{'s' if len(tpl_states) > 1 else ''}."))
+        parts = ([f"{n_top} top-100 layout{'s' if n_top > 1 else ''}"] if n_top else []) + \
+                ([f"{n_deck} deck-structured layout{'s' if n_deck > 1 else ''} (decks with armor rows between them)"] if n_deck else [])
+        emit(dict(type="log", msg="Starting from " + " and ".join(parts) + "."))
     page_seeds = list(cfg.get("seed_states") or [])
 
     # Starting layouts handed in by the page (previous run's best, or another core's best). Ones that do

@@ -77,6 +77,9 @@ def run_bench(lays, data, an, ships_by_id, seconds, overrides, templates, log=pr
             run_cfg["templates"] = [{"rooms": [[r["x"], r["y"], r["w"], r["h"], r["cat"]] for r in A.Ship(o, ship.hull).rooms],
                                      "lifts": [list(s) for s in A.Ship(o, ship.hull).lifts],
                                      "vents": [list(v) for v in A.Ship(o, ship.hull).vents]} for o in others]
+        decks = os.environ.get("BENCH_DECKS", "always")          # the website default: always
+        if decks != "0":
+            run_cfg["deck_starts"] = "always" if decks == "always" else True
         if similar:                     # borrowed from OTHER hulls with a similar shape (never this hull)
             sim = A.similar_templates(ship.hull, data["layouts"], ships_by_id, exclude_ship_ids={l["ship_id"]},
                                       max_n=6, min_overlap=float(os.environ.get("BENCH_MIN_OVERLAP", "0.6")))
