@@ -13,16 +13,19 @@ ship-optimizer-site/
 ├── js/
 │   ├── app.js                   settings forms, start/stop, SVG layout drawing, downloads
 │   ├── hulls.js                 "Find a ship hull" box (browser version of tools/grab_hull.py)
+│   ├── gamerooms.js             room-name autocomplete with real game sizes and types
 │   └── worker.js                Web Worker: loads Pyodide and runs the optimizer off the main thread
 ├── python/
 │   ├── ship_layout_finder.py    YOUR optimizer, unmodified
 │   └── web_driver.py            glue: injects web settings, runs the search loop, returns JSON
 ├── data/
-│   └── ships.json               every ship hull, built by tools/build_ship_list.py
+│   ├── ships.json               every ship hull, built by tools/build_ship_list.py
+│   └── rooms.json               every room design (size, type), built by tools/build_room_list.py
 ├── tools/
 │   ├── grab_hull.py             command-line hull grabber
-│   └── build_ship_list.py       writes data/ships.json (reuses grab_hull.py)
-├── .github/workflows/refresh-ships.yml   rebuilds data/ships.json weekly
+│   ├── build_ship_list.py       writes data/ships.json (reuses grab_hull.py)
+│   └── build_room_list.py       writes data/rooms.json
+├── .github/workflows/refresh-ships.yml   rebuilds both lists weekly
 ├── .nojekyll                    tells GitHub Pages to serve files as-is
 └── README.md
 ```
@@ -45,6 +48,10 @@ optimizer treats it:
 | Combat | Laser, Anti-air, Missile, Hangar, Utility, Other combat | armored, linked for crew travel; anti-air is also pulled to the middle of the other combat rooms |
 | Non-combat | Bedroom, Other non-combat | kept away from armor and lifts |
 | Resource | Resource | placed on `r` hull tiles |
+
+Type a game room's name (e.g. `Missile Launcher`) and pick it from the suggestions: its real size and
+type are filled in from `data/rooms.json`. The game's room types map to the page's types in `TYPE_CAT` in
+`js/gamerooms.js` (only shield *generators* count as priority; batteries and capacitors are utility).
 
 Results show each room in its type's colour, labelled with the initials of its name, and the coordinates
 table lists the type. The anti-air pull is `CENTER_GROUPS` / `W_CENTER` (section 9 of the optimizer config); its strength is
@@ -87,7 +94,10 @@ Open http://localhost:8000
 
 ## Notes
 
-- A browser runs the search on one CPU core, so it is slower than the multiprocess command-line version.
-  Use the time limit or Stop; the best layouts found so far stay on screen.
+- The search runs one Python runtime per CPU core (*Search > CPU cores to use*, 0 = automatic). With
+  restarts at 0 it runs in 45-second rounds; after each round every core continues from the best layouts
+  of all cores. Use the time limit or Stop; the best layouts found so far stay on screen.
+- The best layouts are saved in your browser. Tick *Continue from the best layouts of earlier searches* to
+  pick up where you left off (saved layouts that no longer fit your hull or room list are skipped).
 - Settings are remembered in your browser (localStorage).
 - Pyodide is loaded from the jsDelivr CDN, pinned to v0.26.4 in `js/worker.js`.

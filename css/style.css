@@ -87,3 +87,5 @@ input.invalid { border-color: var(--bad); }
 .chip { background: var(--panel2); border-radius: 10px; padding: 1px 8px; font-size: 12px; }
 .chip i, .addchip i, .typecell i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: 0; }
 td.typecell { white-space: nowrap; }
+.rc-hint { font-size: 11px; margin-top: 3px; }
+.rc-hint:empty { display: none; }
