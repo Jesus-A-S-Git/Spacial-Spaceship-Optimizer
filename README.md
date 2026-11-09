@@ -17,6 +17,7 @@ ship-optimizer-site/
 │   ├── gamerooms.js             room-name autocomplete with real game sizes and types
 │   ├── categories.js            room types and colours (shared by both pages)
 │   ├── top.js                   top-100 data: hull matching, starting layouts
+│   ├── recommend.js             room recommender: rooms for a build, scaled to the hull, limited to its ship level
 │   ├── analyze.js               Top 100 page charts and layout gallery
 │   └── worker.js                Web Worker: loads Pyodide and runs the optimizer off the main thread
 ├── python/
@@ -44,6 +45,36 @@ The driver only needs the `# ---- END CONFIG -` marker line and the config const
 
 Hull rows may use `x` (usable), `r` (resource space, only resource rooms go there) and `.` (outside).
 The optional `--top50` and `--learn` (numpy) modes of the optimizer are command-line only and are not used by the web page.
+
+## Using the page
+
+The steps bar at the top shows where you are: **1 Pick your hull** (type the ship's name under *Find a ship hull*),
+**2 Choose rooms** (use the recommender below, or edit the list by hand) and **3 Start the search**. *How to use this
+page* above the results explains each step. Pick a search time with the time buttons (1 min ... until you stop it); the
+other search settings, armor/lift/vent settings and scoring weights are folded away under their headings.
+The room list can be cleared, copied as text and pasted back (for example to keep several builds).
+
+## Room recommender (rooms for a build)
+
+*Settings > Rooms > Recommend rooms for a build*: pick a main weapon (lasers, missiles, hangars, cannons, boarding) and
+optionally a second one (e.g. missiles + hangars = missile/hangar hybrid), or click one of the top-100 builds. The page:
+
+* takes what the top-100 ships of that build run (rooms of each type per 100 hull tiles, the rooms they prefer for each
+  type, armor per 100 tiles, lifts and vents; `recommend` in `data/top_analysis.json`). Builds flown by few top ships are
+  blended with ships of the same main weapon and the whole top 100;
+* scales it to your hull's size and keeps only rooms **your hull's ship level can build**, each at the best level it
+  allows (the ship level comes from the hull you picked, or choose one). Rooms that unlock later are listed;
+* checks power the way that build's top ships run it (made / needed at full power, e.g. about 51% for missile/hangar
+  hybrids and 56% for missile builds; about half overall) and adds reactors when it is lower;
+* makes it fit: rooms + armor + space for lifts and vents within the hull, leaving out the least important rooms first;
+* skips event and premium rooms (starbux, rewards, one-level rooms) unless you tick *Include event and special rooms*.
+
+*Use these rooms* replaces the room list and armor count (*Undo* puts yours back). The Top 100 page links here with
+`index.html?build=missile%2Bhangar&ship=<id>`.
+
+Ship levels (`level` in `data/ships.json`) and room tiers (`minShip`, `power`, `powerGen`, `capacity`, `price` in
+`data/rooms.json`) come from the official game API with the data refresh. To refresh only the game data, run the
+workflow from the Actions tab with *game_data_only* ticked.
 
 ## Rooms
 
@@ -104,6 +135,19 @@ optimizer learned:
 * **Connect every combat room** (*Armor, lifts and vents*, on by default; optimizer `CONNECT_ALL`, section 14): after
   each search the optimizer adds the vent or lift that reconnects the most cut-off combat rooms, until all are
   reachable (if the hull, vent count and lift count allow it).
+
+## More on the Top 100 page
+
+* **What the top 10 do differently**: rooms, armor, lifts, vents and hull use per rank band (top 10, 11-25, 26-50,
+  51-100), the main weapon in each band, and the rooms the top 10 run more (and less) often than the rest.
+* **Build explorer**: for each build, rooms of each type per 100 hull tiles and the rooms its ships prefer, with
+  *Plan this build in the optimizer*.
+* **What goes with more trophies**: rank correlation of trophies with armor, rooms, lifts, vents and each room type.
+* **Power: made and needed**: for every top ship the power its reactors make and the power all its systems draw at
+  full power (rooms counted at the best level the ship's level allows, since the ladder data has no room levels), the
+  made/needed ratio for the whole top 100 and for each build (median and middle half), and where the power goes by
+  room type. The *Every ship* table lists each ship's power. The room recommender uses the chosen build's ratio.
+* Overview tiles include how much of their rooms' full power top ships make and how full their hulls are.
 
 ## Builds (Top 100 page)
 

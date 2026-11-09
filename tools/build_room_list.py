@@ -45,6 +45,15 @@ def load(g, src):
     return g["entries"](data)
 
 
+def num(v):
+    """int/float from an API attribute, None if missing or not a number."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return int(f) if f == int(f) else round(f, 2)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--source", default="official", help="official (default), a URL, or a saved .json/.xml file")
@@ -73,6 +82,20 @@ def main():
                                      "type": typ, "category": str(pick(e, "categorytype", "category") or ""),
                                      "w": w, "h": h, "levels": [lvl, lvl]})
         rg["levels"] = [min(rg["levels"][0], lvl), max(rg["levels"][1], lvl)]
+        # what the website's room recommender needs: lowest ship level that can build the room, how many a
+        # ship may have, power used / made, and capacity (crew for bedrooms, HP for shields ...)
+        for field, names, agg in (("minShip", ("minshiplevel",), min), ("maxCount", ("maxcount",), max),
+                                  ("power", ("maxsystempower",), max), ("powerGen", ("maxpowergenerated",), max),
+                                  ("capacity", ("capacity",), max)):
+            v = num(pick(e, *names))
+            if v is not None and (v or field == "minShip"):
+                rg[field] = v if field not in rg else agg(rg[field], v)
+        # how the room is obtained (price, requirement, flags): tells shop rooms from event / reward rooms
+        for field, names in (("price", ("pricestring",)), ("req", ("requirementstring",)), ("flags", ("flags",)),
+                             ("rank", ("itemrank",))):
+            v = pick(e, *names)
+            if v not in (None, "", "0"):
+                rg[field] = str(v)
     rooms = sorted(groups.values(), key=lambda r: (r["name"].lower(), r["w"] * r["h"]))
     if not rooms:
         sys.exit("No room designs with a size were found; data/rooms.json was not changed.")

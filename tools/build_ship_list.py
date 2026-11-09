@@ -31,7 +31,7 @@ def main():
     ap.add_argument("--out", default=OUT)
     a = ap.parse_args()
     g = grab_hull()
-    ships, seen = [], set()
+    ships, seen, fields = [], set(), set()
     for e in g["entries"](g["load"](a.source)):
         try:
             rows = g["to_rows"](e)
@@ -45,14 +45,24 @@ def main():
             continue
         seen.add(key)
         sid = g["pick"](e, "shipdesignid", "id")
-        ships.append({"name": name, "id": int(sid) if str(sid or "").isdigit() else None, "hull": rows})
+        ship = {"name": name, "id": int(sid) if str(sid or "").isdigit() else None, "hull": rows}
+        # ship level (hull tier): the website only recommends rooms this level can build
+        lvl = g["pick"](e, "shiplevel", "level")
+        if str(lvl or "").isdigit():
+            ship["level"] = int(lvl)
+        for field, names in (("race", ("raceid",)), ("type", ("shiptype",))):
+            v = g["pick"](e, *names)
+            if v not in (None, ""):
+                ship[field] = int(v) if str(v).isdigit() else str(v)
+        ships.append(ship)
+        fields.update(e.keys())
     if not ships:
         sys.exit("No ship designs with a grid were found; data/ships.json was not changed.")
     ships.sort(key=lambda s: s["name"].lower())
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     with open(a.out, "w", encoding="utf-8") as f:
         json.dump({"updated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "source": a.source,
-                   "ships": ships}, f, separators=(",", ":"))
+                   "fields": sorted(fields), "ships": ships}, f, separators=(",", ":"))
         f.write("\n")
     print(f"Wrote {len(ships)} ship hulls to {a.out}")
 
