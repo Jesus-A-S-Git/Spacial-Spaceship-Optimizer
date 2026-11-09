@@ -497,6 +497,29 @@ def run(cfg_json, source_path, emit_fn):
             succ_tot = [x * 0.9 for x in succ_tot]
         progress(force=True)
 
+    # Final clean-up of the best layouts: slide whole decks/columns (moves armor belts between decks),
+    # reconnect combat rooms, drop vents that are not needed.
+    if best is not None and hasattr(m, "final_touch"):
+        emit(dict(type="log", msg="Final clean-up of the best layouts..."))
+        rngf = random.Random(base_seed ^ 0xF1)
+        deadline = time.time() + max(4.0, min(20.0, 0.12 * (time_limit or 60)))
+        cands = [best] + [r for _, r in sorted(population, key=lambda p: -p[0]) if r[2]["state"] != best[2]["state"]][:2]
+        m.tick = lambda n: None                  # no time-limit stop inside the clean-up (it has its own deadline)
+        for res0 in cands:
+            if time.time() > deadline:
+                break
+            try:
+                st2, r2 = m.final_touch(m.clone(res0[2]["state"]), res0, rngf, deadline)
+            except Exception as e:                # never lose the search result over the clean-up
+                emit(dict(type="log", msg=f"Clean-up skipped: {e}"))
+                continue
+            if r2:
+                population = m.add_population(population, (r2[0], r2), pop_size)
+                if r2[0] > best_score:
+                    best, best_score = r2, r2[0]
+                    best_box[0] = best_score
+        emit(dict(type="best", score=best_score, layouts=top_layouts(), restart=done[0]))
+
     odds = {n: w for n, w in zip(m.OP_NAMES, weights)}
     progress(force=True)
     emit(dict(type="done", reason=reason, restarts=done[0], elapsed=time.time() - t0,
