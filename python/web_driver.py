@@ -258,13 +258,14 @@ def template_state(m, tpl, rng):
                 continue
             w, h = m.ROOMS[r][2], m.ROOMS[r][3]
             for i, t in enumerate(avail):
-                if not used[i] and t["w"] == w and t["h"] == h and test(meta[r], t):
+                if (not used[i] and t["w"] == w and t["h"] == h and test(meta[r], t)
+                        and m.rect_ok(t["x"], t["y"], w, h, r)):        # (a borrowed layout may not fit this hull)
                     used[i] = True
                     assigned.add(r)
                     st["pos"][r] = (t["x"], t["y"])
                     break
     lifts = sorted((tuple(int(v) for v in l) for l in tpl.get("lifts", [])), key=lambda l: l[1] - l[2])
-    lifts = [l for l in lifts if l[2] - l[1] >= 1][: m.MAX_LIFTS]
+    lifts = [l for l in lifts if l[2] - l[1] >= 1 and all(m.free_tile(l[0], y) for y in range(l[1], l[2] + 1))][: m.MAX_LIFTS]
     if len(lifts) >= m.MIN_LIFTS:
         st["lifts"] = lifts
     st["vents"] = []
@@ -405,7 +406,7 @@ def run(cfg_json, source_path, emit_fn):
         if st:
             tpl_states.append(st)
     if tpl_states:
-        emit(dict(type="log", msg=f"Starting from {len(tpl_states)} top-100 layout{'s' if len(tpl_states) > 1 else ''} on this hull."))
+        emit(dict(type="log", msg=f"Starting from {len(tpl_states)} top-100 layout{'s' if len(tpl_states) > 1 else ''}."))
     page_seeds = list(cfg.get("seed_states") or [])
 
     # Starting layouts handed in by the page (previous run's best, or another core's best). Ones that do

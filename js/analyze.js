@@ -142,6 +142,7 @@ const BENCH_ROWS = [
 const BENCH_NAMES = {
   "original": "Original weights, from scratch",
   "top": "Top-player style, from scratch",
+  "top+similar": "Top-player style, borrowing layouts from similar hulls",
   "top+templates": "Top-player style, starting from other top layouts on the hull",
   "original+templates": "Original weights, starting from other top layouts",
 };
