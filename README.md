@@ -84,8 +84,12 @@ optimizer learned:
   with theirs; the original weights value crew reaching every room so much that layouts end up with about
   25% less armor value than top ships. The top-player style closes most of that gap (results on the Top 100
   page, re-measured weekly). Command line: `--style top` or `STYLE = "top"` (optimizer section 12).
-* **Walking** (*Armor, lifts and vents*): crew walk through every room, as in the game (optimizer
-  `WALK_NONCOMBAT`). The command line keeps the original combat-floors-only model unless you set it.
+* **Walking** (*Armor, lifts and vents*): game-like walking, on by default. Crew walk through every room
+  (optimizer `WALK_NONCOMBAT`), and Service Vents follow the game (optimizer `VENT_GAME_LINKS`, section 13): a vent
+  links the rooms, vents and lifts it touches, needs something solid under it (armor goes under vents first:
+  "sandwiching"), and vents may touch. Measured on the top 100: with these rules the #1 ship is fully connected
+  through its 9 vents, and only 11% of top-player vents look pointless (43% if vents only linked sideways).
+  The command line keeps the original models unless you set them.
 
 ## Ship hulls
 

@@ -109,15 +109,15 @@ class Ship:
 
     def __init__(self, lay, hull):
         self.lay, self.hull = lay, hull
-        self.rooms, self.armor, self.lift_cells = [], [], []
+        self.rooms, self.armor, self.lift_cells, self.vents = [], [], [], []
         for x, y, w, h, typ, short, name in lay["rooms"]:
             c = cat_for(typ, name)
             if c == "armor":
                 self.armor.append((x, y))
             elif c == "lift":
                 self.lift_cells.append((x, y))
-            elif c == "corridor":
-                continue
+            elif c == "corridor":                        # PixyShip type "Corridor" = Service Vent
+                self.vents.append((x, y))
             else:
                 self.rooms.append(dict(x=x, y=y, w=w, h=h, cat=c, kind=CAT_KIND[c], type=typ, short=short, name=name))
         self.lifts = segments(self.lift_cells)
@@ -150,6 +150,7 @@ def analyse(ships):
         h["ranks"].append(L["rank"])
         per["armor"].append(len(s.armor))
         per["lift_columns"].append(len({x for x, _, _ in s.lifts}))
+        per["vents"].append(len(s.vents))
         per["rooms"].append(len(s.rooms))
         cnt = Counter(r["cat"] for r in s.rooms)
         for c in CATS:
@@ -258,9 +259,9 @@ def ship_cfg(ship, patterns, weights=None, settings=None):
             for k, g in groups.items()]
     nl = len(ship.lifts)
     cfg = dict(hull=ship.hull, rooms=rows, resource_anywhere=True, place_bonus_rooms=False, patterns=patterns,
-               walk_noncombat=True,
+               walk_noncombat=True, vent_game_links=True,
                settings=settings or dict(ARMOR_COUNT=len(ship.armor), MIN_LIFTS=min(nl, 1), MAX_LIFTS=max(nl, 1),
-                                         START_LIFTS=max(1, min(nl, 2)), VENT_COUNT=0, W_PATTERN=1.0))
+                                         START_LIFTS=max(1, min(nl, 2)), VENT_COUNT=len(ship.vents), W_PATTERN=1.0))
     if weights:
         cfg["settings"].update(weights)
     return cfg, rooms
@@ -270,7 +271,7 @@ def ship_module(ship, patterns, weights=None):
     """Build the optimizer for this ship's hull and room list; return (module, state)."""
     cfg, rooms = ship_cfg(ship, patterns, weights)
     m = web_driver.build_module(cfg, os.path.join(ROOT, "python", "ship_layout_finder.py"))
-    state = dict(pos=[(r["x"], r["y"]) for r in rooms], lifts=list(ship.lifts), vents=[])
+    state = dict(pos=[(r["x"], r["y"]) for r in rooms], lifts=list(ship.lifts), vents=list(ship.vents))
     return m, state
 
 

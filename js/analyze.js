@@ -23,6 +23,7 @@ function tiles(a) {
     [a.ships, "top-100 ships analysed"], [a.hulls.length, "different hulls"],
     [p.rooms[1], "rooms per ship (median)"], [p.armor[1], "armor tiles per ship (median)"],
     [p.lift_columns[1], "lift columns per ship (median)"],
+    ...(p.vents ? [[p.vents[1], "service vents per ship (median)"]] : []),
     [a.aa_center ? fmt(a.aa_center[1]) : "-", "tiles from anti-air to the combat middle (median)"],
   ];
   $("tiles").replaceChildren(...items.map(([v, t]) => el("div", { class: "tile" }, el("b", { text: String(v) }), el("span", { text: t }))));
@@ -133,6 +134,7 @@ const BENCH_ROWS = [
   ["armor_pri", "Armor tiles on each priority room", 2, true],
   ["armor_float", "Armor touching no combat room", 1, false],
   ["lifts", "Lift columns", 1, null],
+  ["vents", "Service vents", 1, null],
   ["unreach", "Room pairs crew cannot reach", 0, null],
   ["nc_grouped", "Non-combat rooms grouped", "%", true],
   ["edge_nc", "Non-combat outline on the hull edge", "%", null],
@@ -151,8 +153,10 @@ function benchmark(a) {
     el("p", { text: `${n} top-100 ships (even ranks): the optimizer got the same hull, the same rooms and the same armor count as the real ` +
       `player, ${Math.round(b.seconds)} seconds of search on one core and the website's settings, and its best layout was measured ` +
       `the same way as the real ship. Medians over the ships; data from ${(b.updated || "").slice(0, 10)}.` }),
-    el("p", { text: "Top players pack their hulls with armor and accept that crew cannot walk everywhere. The top-player style " +
-      "(the website's default) weights armor the same way; the original weights keep every room reachable at the cost of armor." }));
+    el("p", { text: "Top players pack their hulls with armor and connect rooms with few lifts plus Service Vents (vents link the " +
+      "rooms, vents and lifts they touch, and sit on armor between rooms: \"sandwiching\"). Reachability is measured with these " +
+      "game-like vents. The top-player style (the website's default) weights armor like top players do; the original weights " +
+      "keep every room reachable at the cost of armor." }));
   const t = $("benchTable");
   t.replaceChildren(el("tr", {}, el("th", { text: "Measure" }), el("th", { class: "num", text: "Real top ships" }),
     ...b.configs.map((c) => el("th", { class: "num", text: BENCH_NAMES[c.name] || c.name }))));
@@ -197,6 +201,7 @@ function drawShip(l) {
       (rw > 1 ? `<text x="${(x - x0 + rw / 2) * T}" y="${(y - y0 + rh / 2) * T + 4}" text-anchor="middle" fill="#fff" font-size="10" font-weight="600">${esc(label)}</text>` : "") + "</g>");
   });
   p.armor.forEach(([x, y]) => out.push(`<rect x="${(x - x0) * T + 2}" y="${(y - y0) * T + 2}" width="${T - 4}" height="${T - 4}" fill="#e6b93c"/>`));
+  p.vents.forEach(([x, y]) => out.push(`<rect x="${(x - x0) * T + 3}" y="${(y - y0) * T + 3}" width="${T - 6}" height="${T - 6}" fill="#f5f5f5"><title>Service vent ${x}, ${y}</title></rect>`));
   p.lifts.forEach(([x, a, b]) => out.push(`<rect x="${(x - x0) * T + 3}" y="${(a - y0) * T}" width="${T - 6}" height="${(b - a + 1) * T}" fill="#38c6d9"><title>Lift x=${x}, y ${a}-${b}</title></rect>`));
   out.push("</svg>");
   return { svg: out.join(""), p };
@@ -213,9 +218,9 @@ function gallery(lays) {
     const cnt = {};
     p.rooms.forEach((r) => { cnt[r[4]] = (cnt[r[4]] || 0) + 1; });
     $("galInfo").textContent = `${l.ship_name}, level ${l.ship_level}${l.alliance ? " - " + l.alliance : ""}: ${p.rooms.length} rooms, ` +
-      `${p.armor.length} armor tiles, ${new Set(p.lifts.map((s) => s[0])).size} lift columns.`;
+      `${p.armor.length} armor tiles, ${new Set(p.lifts.map((s) => s[0])).size} lift columns, ${p.vents.length} vents.`;
     $("galLegend").replaceChildren(...ROOM_CATEGORIES.filter((c) => cnt[c.id]).map((c) => el("span", {}, swatch(c.color), document.createTextNode(`${c.label} (${cnt[c.id]})`))),
-      el("span", {}, swatch("#e6b93c"), document.createTextNode("Armor")), el("span", {}, swatch("#38c6d9"), document.createTextNode("Lift")));
+      el("span", {}, swatch("#e6b93c"), document.createTextNode("Armor")), el("span", {}, swatch("#38c6d9"), document.createTextNode("Lift")), el("span", {}, swatch("#f5f5f5"), document.createTextNode("Vent")));
     $("galOpen").href = optimizerLink(l.ship_id);
   };
   sel.onchange = render;

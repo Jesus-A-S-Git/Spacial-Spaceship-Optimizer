@@ -71,6 +71,7 @@ def build_injection(cfg):
         lines.append(f"COMBAT_ARMOR_RANGE = ({int(cr[0])}, {int(cr[1])})")
     lines.append(f"PLACE_BONUS_ROOMS = {bool(cfg.get('place_bonus_rooms', True))}")
     lines.append(f"WALK_NONCOMBAT = {bool(cfg.get('walk_noncombat', False))}")
+    lines.append(f"VENT_GAME_LINKS = {bool(cfg.get('vent_game_links', False))}")
     if "rooms" in cfg:
         groups, meta = categorized_rooms(cfg["rooms"])
     else:                                       # older page: separate tables per kind
@@ -266,13 +267,21 @@ def template_state(m, tpl, rng):
     if len(lifts) >= m.MIN_LIFTS:
         st["lifts"] = lifts
     st["vents"] = []
+    tpl_vents = [tuple(int(v) for v in vt) for vt in tpl.get("vents", [])]
     # Rooms the top player did not have go into free space (largest first). If one does not fit, give up
     # a copied spot (non-combat first) and try again.
     release = sorted(assigned, key=lambda r: ({"resource": 0, "noncombat": 1, "combat": 2, "priority": 3}[meta[r]["kind"]],
                                              -m.ROOMS[r][2] * m.ROOMS[r][3]))
     for _ in range(len(release) + 1):
         if _fill_free(m, st, assigned):
-            return st if m.occupancy(st) is not None else None
+            if m.occupancy(st) is None:
+                return None
+            for vt in tpl_vents:                      # the top player's vents, where they still fit
+                if len(st["vents"]) >= m.VENT_COUNT:
+                    break
+                if m.occupancy(dict(st, vents=st["vents"] + [vt])) is not None:
+                    st["vents"].append(vt)
+            return st
         if not release:
             break
         assigned.discard(release.pop(0))
