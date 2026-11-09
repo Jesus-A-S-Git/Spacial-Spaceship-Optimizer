@@ -100,6 +100,16 @@ optimizer learned:
   each search the optimizer adds the vent or lift that reconnects the most cut-off combat rooms, until all are
   reachable (if the hull, vent count and lift count allow it).
 
+## Builds (Top 100 page)
+
+Every top ship is classified by its offense and defense, e.g. "Laser build · light missiles · heavy anti-air".
+Offense: the weapon type with the most rooms (lasers, missiles, hangars, cannons = EMP/Ion/Gamma and similar,
+boarding = teleports) is the build; a second type with at least a quarter of the weapon rooms makes it a hybrid,
+smaller amounts are listed as "some" / "light". Defense: anti-air, engines (anti-missile), anti-teleport,
+cloak/radar, shield support, crew support and armor are compared with the rest of the top 100 (heavy = top
+quarter, light = bottom quarter, "no" = none). The page shows how many ships run each build, what each build
+runs on average, and every ship's build (`builds` in `data/top_analysis.json`, `tools/analyze_top.py`).
+
 ## Ship hulls
 
 In **Settings > Hull > Find a ship hull**, type part of a ship name, pick one from the list (or use the

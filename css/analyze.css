@@ -46,3 +46,6 @@ table.heat td.na { background: transparent; }
 .scale .sw { width: 28px; height: 10px; border-radius: 2px; }
 @media (max-width: 600px) { .hbars, .dbars { grid-template-columns: 100px 1fr 50px; } }
 .tablewrap.free { max-height: none; }
+td.hi { background: #1c3350; font-weight: 600; }
+.buildlabel { margin: 4px 0; font-size: 13px; }
+td.buildcell { font-size: 12px; }

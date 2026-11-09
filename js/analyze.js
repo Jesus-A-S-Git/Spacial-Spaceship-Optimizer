@@ -175,6 +175,51 @@ function benchmark(a) {
     ...b.configs.map((c) => el("td", { class: "num", text: `${c.armor_at_least_real} of ${c.ships}` }))));
 }
 
+// ---------------------------------------------------------------- builds
+function buildsSection(a) {
+  const b = a.builds;
+  if (!b) return false;
+  const box = $("buildBars");
+  box.replaceChildren();
+  const max = Math.max(...b.summary.map((g) => g.ships));
+  b.summary.forEach((g) => {
+    const track = el("div", { class: "track", title: `${g.build}: ${g.ships} of the top 100, best rank #${g.best_rank}, median rank #${fmt(g.median_rank, 0)}, average ${g.trophies} trophies` },
+      el("div", { class: "fill", style: `width:${(g.ships / max) * 100}%` }));
+    box.append(el("div", { class: "lab" }, document.createTextNode(g.build)), track,
+      el("div", { class: "val", text: `${g.ships} · #${g.best_rank}` }));
+  });
+  // build x (offense mix, defenses) table, cells shaded where clearly above the top-100 median
+  const off = b.offense_types, dfn = b.defense_types;
+  const t = $("buildTable");
+  t.replaceChildren(el("tr", {}, el("th", { text: "Build" }), el("th", { class: "num", text: "Ships" }),
+    ...off.map(([, n]) => el("th", { class: "num", text: n === "Boarding" ? "Boarding (teleports)" : n + "s" })),
+    ...dfn.map(([, n]) => el("th", { class: "num", text: n }))));
+  const offMed = {};
+  off.forEach(([k]) => { const v = b.ships.map((s) => s.offense[k]).sort((x, y) => x - y); offMed[k] = v[Math.floor(v.length / 2)]; });
+  b.summary.forEach((g) => {
+    t.append(el("tr", {}, el("td", { text: g.build }), el("td", { class: "num", text: String(g.ships) }),
+      ...off.map(([k]) => el("td", { class: "num" + (g.offense[k] >= Math.max(1, offMed[k] * 2) ? " hi" : ""), text: fmt(g.offense[k]) })),
+      ...dfn.map(([k]) => el("td", { class: "num" + (g.defense[k] > b.spread[k][2] - 0.01 && g.defense[k] > b.spread[k][1] ? " hi" : ""), text: fmt(g.defense[k]) }))));
+  });
+  // every ship, filterable by build
+  const sel = $("buildFilter");
+  sel.replaceChildren(el("option", { value: "", text: `All builds (${b.ships.length} ships)` }),
+    ...b.summary.map((g) => el("option", { value: g.build, text: `${g.build} (${g.ships})` })));
+  const list = () => {
+    const tb = $("buildShips");
+    tb.replaceChildren(el("tr", {}, el("th", { class: "num", text: "Rank" }), el("th", { text: "Player" }), el("th", { text: "Hull" }), el("th", { text: "Build" })));
+    b.ships.filter((s) => !sel.value || s.build === sel.value).sort((x, y) => x.rank - y.rank).forEach((s) => {
+      const off = b.offense_types.filter(([k]) => s.offense[k]).map(([k, n]) => `${s.offense[k]} ${n.toLowerCase()}`).join(", ");
+      const dfn = b.defense_types.map(([k, n]) => `${s.defense[k]} ${n}`).join(", ");
+      tb.append(el("tr", {}, el("td", { class: "num", text: "#" + s.rank }), el("td", { text: s.name }), el("td", { text: s.ship }),
+        el("td", { class: "buildcell", text: s.label, title: `Weapons: ${off || "none"}\nDefense: ${dfn}` })));
+    });
+  };
+  sel.onchange = list;
+  list();
+  return true;
+}
+
 // ---------------------------------------------------------------- gallery
 function drawShip(l) {
   const ship = Hulls.byId(l.ship_id);
@@ -222,6 +267,8 @@ function gallery(lays) {
     $("galLegend").replaceChildren(...ROOM_CATEGORIES.filter((c) => cnt[c.id]).map((c) => el("span", {}, swatch(c.color), document.createTextNode(`${c.label} (${cnt[c.id]})`))),
       el("span", {}, swatch("#e6b93c"), document.createTextNode("Armor")), el("span", {}, swatch("#38c6d9"), document.createTextNode("Lift")), el("span", {}, swatch("#f5f5f5"), document.createTextNode("Vent")));
     $("galOpen").href = optimizerLink(l.ship_id);
+    const bs = Top100.analysis && Top100.analysis.builds && Top100.analysis.builds.ships.find((s) => s.rank === l.rank);
+    $("galBuild").textContent = bs ? "Build: " + bs.label : "";
   };
   sel.onchange = render;
   render();
@@ -238,6 +285,7 @@ Promise.all([Top100.load(), Hulls.load(false).catch(() => null)]).then(() => {
   $("subtitle").textContent = `How the top ${a.ships} ladder players build their ships (data from ${(a.updated || "").slice(0, 10)}), and what the optimizer learns from them.`;
   tiles(a); show("secOverview");
   hullTable(a); show("secHulls");
+  if (buildsSection(a)) show("secBuilds");
   gallery(lays); show("secGallery");
   roomBars(a); show("secRooms");
   edgeBars(a); show("secEdge");

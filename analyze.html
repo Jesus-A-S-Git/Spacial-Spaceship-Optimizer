@@ -27,6 +27,21 @@
       <div class="tablewrap tall"><table id="hullTable"></table></div>
     </section>
 
+    <section class="panel" id="secBuilds" hidden>
+      <h2>Builds: offense and defense</h2>
+      <p class="muted">Each ship is classified by its weapons (the biggest share is the build; a second weapon type with at
+        least a quarter of the weapon rooms makes it a hybrid) and by its defenses compared with the rest of the top 100
+        (heavy = top quarter, light = bottom quarter). Cannons = EMP, Ion, Gamma beam and similar; boarding = teleports.</p>
+      <p class="muted">Bars: number of top-100 ships with that build · best rank among them.</p>
+      <div id="buildBars" class="hbars"></div>
+      <h3>What each build runs</h3>
+      <p class="muted">Average rooms per ship (armor = armor tiles). Shaded cells are well above the top-100 middle.</p>
+      <div class="tablewrap free"><table id="buildTable"></table></div>
+      <h3>Every ship</h3>
+      <div class="toolbar"><select id="buildFilter" aria-label="Filter by build"></select></div>
+      <div class="tablewrap tall"><table id="buildShips"></table></div>
+    </section>
+
     <section class="panel" id="secGallery" hidden>
       <h2>Layouts</h2>
       <div class="toolbar">
@@ -34,6 +49,7 @@
         <a id="galOpen" class="btnlink" href="#">Open this hull in the optimizer</a>
       </div>
       <div id="galInfo" class="muted"></div>
+      <div id="galBuild" class="buildlabel"></div>
       <div id="galSvg" class="layoutbox"></div>
       <div id="galLegend" class="legend"></div>
     </section>

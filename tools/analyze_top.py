@@ -283,6 +283,85 @@ def analyse(ships):
     }
 
 
+# ------------------------------------------------------------------ builds (offense / defense)
+OFFENSE = [("laser", "Laser"), ("missile", "Missile"), ("hangar", "Hangar"), ("combat", "Cannon"), ("boarding", "Boarding")]
+DEFENSE = [("antiair", "anti-air"), ("antimissile", "engines"), ("antitele", "anti-teleport"), ("cloak", "cloak/radar"),
+           ("shieldsupport", "shield support"), ("crewsupport", "crew support"), ("armor", "armor")]
+
+
+def ship_profile(s):
+    """Room counts per offense / defense type for one top ship (cannons = the 'Other combat' category:
+    EMP, Ion, Gamma beam ...; armor = armor tiles)."""
+    cnt = Counter(r["cat"] for r in s.rooms)
+    off = {k: cnt.get(k, 0) for k, _ in OFFENSE}
+    dfn = {k: cnt.get(k, 0) for k, _ in DEFENSE if k != "armor"}
+    dfn["armor"] = len(s.armor)
+    return off, dfn
+
+
+def build_label(off, dfn, spread):
+    """'Laser build · light missiles · heavy anti-air · no cloak/radar' from room counts. spread = per defense
+    type (q1, q3) over the top 100: >= q3 (and above the median) is heavy, <= q1 light, 0 = none."""
+    total = sum(off.values())
+    names = dict(OFFENSE)
+    if not total:
+        main, parts = "No-weapon", []
+    else:
+        order = sorted(off, key=lambda k: -off[k])
+        top, second = order[0], order[1]
+        if off[second] / total >= 0.25:
+            main = f"{names[top]}/{names[second]} hybrid"
+            rest = order[2:]
+        else:
+            main = f"{names[top]} build"
+            rest = order[1:]
+        parts = []
+        for k in rest:
+            if off[k]:
+                share = off[k] / total
+                parts.append(("some " if share >= 0.15 else "light ") + names[k].lower() + ("s" if names[k] not in ("Boarding",) else ""))
+    dparts = []
+    for k, label in DEFENSE:
+        q1, med, q3 = spread[k]
+        v = dfn[k]
+        if v == 0 and q3 > 0:
+            if k in ("antiair", "antimissile", "antitele"):
+                dparts.append("no " + label)
+        elif v >= q3 and v > med:
+            dparts.append("heavy " + label)
+        elif v <= q1 and v < med:
+            dparts.append("light " + label)
+    return main, parts, dparts
+
+
+def builds(ships):
+    """Offense / defense build of every top ship, plus what the builds have in common."""
+    profiles = [(s, *ship_profile(s)) for s in ships]
+    spread = {}
+    for k, _ in DEFENSE:
+        q = q3([d[k] for _, _, d in profiles])
+        spread[k] = (q[0], q[1], q[2])
+    per_ship, groups = [], defaultdict(list)
+    for s, off, dfn in profiles:
+        main, parts, dparts = build_label(off, dfn, spread)
+        L = s.lay
+        per_ship.append(dict(rank=L["rank"], name=L["name"], ship=L["ship_name"], trophies=L.get("trophies"),
+                             build=main, label=" · ".join([main] + parts + dparts), offense=off, defense=dfn))
+        groups[main].append((L, off, dfn))
+    summary = []
+    for main, items in groups.items():
+        ranks = [L["rank"] for L, _, _ in items]
+        summary.append(dict(
+            build=main, ships=len(items), best_rank=min(ranks), median_rank=statistics.median(ranks),
+            trophies=round(statistics.mean(L.get("trophies") or 0 for L, _, _ in items)),
+            offense={k: round(statistics.mean(o[k] for _, o, _ in items), 1) for k, _ in OFFENSE},
+            defense={k: round(statistics.mean(d[k] for _, _, d in items), 1) for k, _ in DEFENSE}))
+    summary.sort(key=lambda b: (-b["ships"], b["best_rank"]))
+    return dict(ships=per_ship, summary=summary,
+                spread={k: list(v) for k, v in spread.items()},
+                offense_types=[list(t) for t in OFFENSE], defense_types=[list(t) for t in DEFENSE])
+
+
 # ------------------------------------------------------------------ calibration
 FEATURES = [  # (weight, feature from finalize info; score = sum(weight * feature) + extras)
     ("W_ARMOR", lambda i, s: i["arm_sum"]),
@@ -492,6 +571,7 @@ def main():
         json.dump({"updated": updated, "fields": ["x", "y", "w", "h", "type", "short", "name"], "layouts": lays},
                   f, ensure_ascii=False, separators=(",", ":"))
     result = analyse(ships)
+    result["builds"] = builds(ships)
     result["updated"] = updated
     m0 = web_driver.build_module(dict(hull=["x" * 12] * 12, rooms=[], settings={"ARMOR_COUNT": 4}), os.path.join(ROOT, "python", "ship_layout_finder.py"))
     try:
