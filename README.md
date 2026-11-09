@@ -42,12 +42,13 @@ optimizer treats it:
 | Kind | Types | Behaviour |
 |---|---|---|
 | Priority | Reactor, Shield generator, Other priority | gets the most armor |
-| Combat | Laser, Anti-air, Missile, Hangar, Utility, Other combat | armored, linked for crew travel |
+| Combat | Laser, Anti-air, Missile, Hangar, Utility, Other combat | armored, linked for crew travel; anti-air is also pulled to the middle of the other combat rooms |
 | Non-combat | Bedroom, Other non-combat | kept away from armor and lifts |
 | Resource | Resource | placed on `r` hull tiles |
 
 Results show each room in its type's colour, labelled with the initials of its name, and the coordinates
-table lists the type. Types and colours are defined in `ROOM_CATEGORIES` in `js/app.js`.
+table lists the type. The anti-air pull is `CENTER_GROUPS` / `W_CENTER` (section 9 of the optimizer config); its strength is
+*Scoring weights > Anti-air placement* on the page. Types and colours are defined in `ROOM_CATEGORIES` in `js/app.js`.
 
 ## Ship hulls
 
