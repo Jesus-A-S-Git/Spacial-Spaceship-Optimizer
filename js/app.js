@@ -26,9 +26,9 @@ const DEFAULTS = {
     { name: "Hangar", cat: "hangar", w: 5, h: 2, count: 1, armor: "", short: "HAN" },
     { name: "Ion Cannon", cat: "combat", w: 3, h: 3, count: 1, armor: "", short: "ION" },
     { name: "Freeze Ray", cat: "combat", w: 4, h: 2, count: 1, armor: "" },
-    { name: "Android Studio", cat: "utility", w: 2, h: 2, count: 1, armor: "", short: "AS" },
-    { name: "Shield Battery", cat: "utility", w: 2, h: 2, count: 1, armor: "" },
-    { name: "Cloak Generator", cat: "utility", w: 3, h: 2, count: 1, armor: "", short: "CG" },
+    { name: "Android Studio", cat: "crewsupport", w: 2, h: 2, count: 1, armor: "", short: "AS" },
+    { name: "Shield Battery", cat: "shieldsupport", w: 2, h: 2, count: 1, armor: "" },
+    { name: "Cloak Generator", cat: "cloak", w: 3, h: 2, count: 1, armor: "", short: "CG" },
     { name: "Bedroom", cat: "crew", w: 3, h: 2, count: 9, armor: "", short: "BED" },
   ],
   resource_anywhere: true,
@@ -822,7 +822,14 @@ Promise.all([Hulls.load(false).catch(() => null), Top100.load()]).then(() => {
 GameRooms.load().then((n) => {
   if (!n) return;
   GameRooms.fillDatalist($("gameRoomNames"));
-  cfgState.rooms.forEach((r) => { const g = GameRooms.find(r.name); if (g && !r.short) r.short = g.short; });
+  cfgState.rooms.forEach((r) => {
+    const g = GameRooms.find(r.name);
+    if (!g) return;
+    if (!r.short) r.short = g.short;
+    // rooms saved before utility was split up: move game rooms still marked "utility" to their category
+    if (r.cat === "utility" && g.cat !== "utility" && CAT[g.cat]) r.cat = g.cat;
+  });
+  saveSettings();
   $("roomLibNote").textContent = `Type a room name to use one of ${n} game rooms (real size and type filled in automatically; list from ${GameRooms.updated}).`;
   buildRooms();
 });

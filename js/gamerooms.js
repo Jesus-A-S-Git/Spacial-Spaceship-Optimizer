@@ -7,17 +7,17 @@ const GameRooms = (() => {
     Reactor: "reactor", Shield: "shield",
     Laser: "laser", Cannon: "combat", Missile: "missile", StationMissile: "missile",
     Carrier: "hangar", AntiCraft: "antiair",
-    Engine: "utility", Android: "utility", Stealth: "utility", Teleport: "utility", Medical: "utility",
-    Command: "utility", Bridge: "utility", Trap: "utility", Radar: "utility", Booster: "utility",
-    AntiTeleport: "utility", Reviver: "utility",
+    Engine: "antimissile", AntiTeleport: "antitele", Trap: "antitele", Teleport: "boarding",
+    Android: "crewsupport", Medical: "crewsupport", Reviver: "crewsupport", Stealth: "cloak", Radar: "cloak",
+    Command: "command", Bridge: "command", Booster: "command",
     Bedroom: "crew", Training: "noncombat", Council: "noncombat", Research: "noncombat",
     Gas: "resource", Mineral: "resource", Storage: "resource", Supply: "resource", Printer: "resource", Recycling: "resource",
   };
   const SKIP = new Set(["Wall", "Lift", "Corridor", "Hull", "None"]);   // armor, lifts etc. are not rooms here
   let byName = new Map(), list = [], updated = "";
 
-  // Only shield GENERATORS are priority rooms; batteries, capacitors etc. are support (utility).
-  const catFor = (type, name) => (type === "Shield" && !/generator/i.test(name) ? "utility" : TYPE_CAT[type] || "combat");
+  // Only shield GENERATORS are priority rooms; batteries, capacitors etc. are shield support.
+  const catFor = (type, name) => (type === "Shield" && !/generator/i.test(name) ? "shieldsupport" : TYPE_CAT[type] || "combat");
   const base = (n) => n.replace(/\s+Lv\s*\d+$/i, "").trim();
   const norm = (n) => base(String(n || "")).toLowerCase().replace(/\s+/g, " ");
 
