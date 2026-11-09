@@ -1,4 +1,4 @@
-name: Refresh ship and room lists
+name: Refresh game data and top-100 layouts
 
 # Rebuilds data/ships.json and data/rooms.json from the official Pixel Starships API, so the website's
 # "Find a ship hull" box and room-name autocomplete stay current. Runs weekly, and on demand from the Actions tab.
@@ -22,14 +22,20 @@ jobs:
         run: python3 tools/build_ship_list.py
       - name: Build room list
         run: python3 tools/build_room_list.py
+      - name: Fetch top-100 player layouts (PixyShip)
+        # PixyShip can be slow or refuse requests; the ship and room lists are still saved if this fails
+        continue-on-error: true
+        run: |
+          python3 tools/pixyship_fetch_layouts.py --top 100 --out build/top --delay 1
+          cp build/top/layouts.json data/top_layouts.json
       - name: Commit if changed
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898273+github-actions[bot]@users.noreply.github.com"
-          git add data/ships.json data/rooms.json
+          git add data/ships.json data/rooms.json data/top_layouts.json 2>/dev/null || git add data/ships.json data/rooms.json
           if git diff --cached --quiet; then
             echo "Ship and room lists unchanged."
           else
-            git commit -m "Refresh ship and room lists"
+            git commit -m "Refresh game data and top-100 layouts"
             git push
           fi
