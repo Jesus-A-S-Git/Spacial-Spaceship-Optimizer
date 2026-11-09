@@ -51,6 +51,8 @@ Score = weighted armor touchpoints (Shield + Reactors count PRIORITY_WEIGHT time
         - W_ISO    * non-combat rooms touching armor/lifts
         + W_SPREAD * average distance between priority rooms (capped)
         - W_CENTER * distance of each CENTER room (e.g. anti-air) from the middle of the other combat rooms
+        + W_PATTERN * room patterns learned from top ships (which room types sit next to each other,
+                      which sit on the hull edge; see section 10 and tools/analyze_top.py)
   With --top50 layouts.json (lessons learned from the top-50 ladder ships, see section 8 of the config):
         + W_SHELL  * hull-edge contact, weighted per room kind by how top ships use the edge
                      (non-combat rooms form the outer shell, combat rooms stay inside)
@@ -224,6 +226,20 @@ W_LIFT_DENSITY = 20.0              # penalty per lift outside the top-50 band of
 #    List COMBAT_ROOMS groups by position (0 = first line). [] switches it off.
 CENTER_GROUPS = []                 # example: [2] if the 3rd COMBAT_ROOMS line is your anti-air
 W_CENTER = 3.0                     # penalty per tile a center room sits away from the combat middle
+
+# 10) Room PATTERNS learned from top ships (tools/analyze_top.py measures them from the top-100 ladder).
+#     Every room has a tag (its type: reactor, laser, bedroom ...). TAG_ADJ scores each pair of touching
+#     rooms by how much more (+) or less (-) often top ships put those two types side by side than chance;
+#     TAG_EDGE scores how much of a room's outline is hull edge, by type. W_PATTERN = 0 switches it off.
+ROOM_TAGS = []                     # one tag per room, in room order; [] = tag rooms by kind
+TAG_ADJ = {}                       # {"laser|reactor": 0.8, ...}  two tags in alphabetical order joined by |
+TAG_EDGE = {}                      # {"crew": 1.1, "reactor": -0.9, ...}  score at a fully edge-facing outline
+W_PATTERN = 0.0                    # strength of the learned patterns
+
+# 11) Walking through non-combat rooms. In the game crew walk along the floor of EVERY room; this
+#     optimizer's original model only lets them use combat-room floors. True = game-like walking:
+#     bedrooms, storage etc. become walkable floor too (needed to score real top ships as connected).
+WALK_NONCOMBAT = False
 
 # ---- ROOMS: (width, height, how_many[, (armor_low, armor_high)]) ----------------------------------------------
 # Priority combat rooms: armor is concentrated on these (e.g. Reactors + Shield).
@@ -583,7 +599,7 @@ def walk_set(pos, lifts, vents, blocked):
     and vents (vents are joined separately in build_graph)."""
     walk = set(lifts)
     for r, (x, y) in enumerate(pos):
-        if ROOMS[r][5]:
+        if ROOMS[r][5] or WALK_NONCOMBAT:
             fy = y + ROOMS[r][3] - 1
             for xx in range(x, x + ROOMS[r][2]):
                 walk.add((xx, fy))
@@ -738,7 +754,7 @@ def corridor_tiles(first_par, reps, tiles, lifts, vents):
 
 def floor_tiles(pos):
     f = set()
-    for r in range(NC):
+    for r in range(NR if WALK_NONCOMBAT else NC):
         x, y = pos[r]
         for xx in range(x, x + ROOMS[r][2]):
             f.add((xx, y + ROOMS[r][3] - 1))
@@ -866,6 +882,37 @@ def _center_note(info):
     return f" | center rooms off the combat middle {info.get('center_dist', 0.0):.1f} tiles"
 
 
+def _room_tags():
+    return list(ROOM_TAGS) if len(ROOM_TAGS) == NR else list(ROOM_KIND)
+
+
+_TAGS = _room_tags()
+
+
+def pattern_score(pos, tiles):
+    """Learned top-ship patterns: touching room types (TAG_ADJ) plus edge-facing share by type (TAG_EDGE)."""
+    if not (TAG_ADJ or TAG_EDGE):
+        return 0.0
+    tags = _TAGS
+    tot = 0.0
+    for r in range(NR):
+        x, y = pos[r]
+        ring = ring_of(x, y, ROOMS[r][2], ROOMS[r][3])
+        if TAG_EDGE:
+            pe = TAG_EDGE.get(tags[r])
+            if pe:
+                tot += pe * sum(1 for t in ring if not ok_tile(*t)) / len(ring)
+        if TAG_ADJ:
+            seen = set()
+            for t in ring:
+                o = tiles.get(t, -1)
+                if o > r and o not in seen:
+                    seen.add(o)
+                    a, b = tags[r], tags[o]
+                    tot += TAG_ADJ.get(a + "|" + b if a <= b else b + "|" + a, 0.0)
+    return tot
+
+
 def cheap_score(state):
     """Fast approximate score (no filler rooms, no real post-armor walking)."""
     occ = occupancy(state)
@@ -885,7 +932,8 @@ def cheap_score(state):
     s = (W_ARMOR * sum(v for _, v in top) - W_TRAVEL * avg - W_GAP * len(res)
          - W_DISC * unreach - W_LIFT * lift_penalty(state, tiles) - W_ISO * iso
          - W_VENT * vent_penalty(vl) - W_CORNER * 0.5 * (cmax + cavg)
-         + W_SPREAD * priority_spread(pos) - W_CENTER * center_distance(pos))
+         + W_SPREAD * priority_spread(pos) - W_CENTER * center_distance(pos)
+         + (W_PATTERN * pattern_score(pos, tiles) if W_PATTERN else 0.0))
     s -= 60 * max(0, ARMOR_COUNT - ncand)
     return s
 
@@ -1706,6 +1754,7 @@ def finalize(state):
     unarmored_rooms = [r for r in range(NC) if touch[r] == 0]
     unarmored_priority = sum(1 for r in unarmored_rooms if r in PRIORITY_SET)
     center_dist = center_distance(pos)
+    pattern = pattern_score(pos, tiles) if W_PATTERN else 0.0
     # Top-50 lessons: outer shell of non-combat rooms, non-combat rooms grouped, lifts spaced like top ships
     shell = 0.0
     nc_alone = 0
@@ -1734,6 +1783,7 @@ def finalize(state):
              - W_LIFT_COUNT * len(state["lifts"])
              + side_bonus
              - W_CENTER * center_dist
+             + W_PATTERN * pattern
              # top-50 style points only count once every combat room is reachable, so they never pull
              # the search toward a layout with a cut-off room
              + (W_SHELL * shell - W_NC_CLUSTER * nc_alone - W_LIFT_DENSITY * lift_density_pen if unreach == 0 else 0.0))
@@ -1746,7 +1796,7 @@ def finalize(state):
                 touch=dict(touch), range_under=under_units, range_over=over_units,
                 shell=shell, nc_alone=nc_alone, lift_density_pen=lift_density_pen,
                 edge_tiles=dict(edge_tiles), ring_tiles=dict(ring_tiles),
-                center_dist=center_dist, center_point=combat_center(pos))
+                center_dist=center_dist, center_point=combat_center(pos), pattern=pattern)
     return score, g, info
 
 

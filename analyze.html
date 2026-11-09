@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Top 100 Analysis</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/analyze.css">
+</head>
+<body>
+  <header>
+    <nav class="topnav"><a href="index.html">Optimizer</a><a href="analyze.html" class="active">Top 100 analysis</a></nav>
+    <h1>Top 100 ships</h1>
+    <p id="subtitle">How the top 100 ladder players build their ships, and what the optimizer learns from them.</p>
+  </header>
+
+  <main class="single">
+    <div id="loadMsg" class="panel muted">Loading top-100 data...</div>
+
+    <section class="panel" id="secOverview" hidden>
+      <div id="tiles" class="tiles"></div>
+    </section>
+
+    <section class="panel" id="secHulls" hidden>
+      <h2>Hulls they fly</h2>
+      <p class="muted">Open a hull in the optimizer: it then starts searching from these players' layouts.</p>
+      <div class="tablewrap tall"><table id="hullTable"></table></div>
+    </section>
+
+    <section class="panel" id="secGallery" hidden>
+      <h2>Layouts</h2>
+      <div class="toolbar">
+        <select id="galPick" aria-label="Player"></select>
+        <a id="galOpen" class="btnlink" href="#">Open this hull in the optimizer</a>
+      </div>
+      <div id="galInfo" class="muted"></div>
+      <div id="galSvg" class="layoutbox"></div>
+      <div id="galLegend" class="legend"></div>
+    </section>
+
+    <section class="panel" id="secRooms" hidden>
+      <h2>Rooms per ship</h2>
+      <p class="muted">Median number of rooms of each type in a top-100 ship (bar), with the middle half of ships (line).</p>
+      <div id="roomBars" class="hbars"></div>
+      <h3>Most used rooms</h3>
+      <div class="tablewrap tall"><table id="popTable"></table></div>
+    </section>
+
+    <section class="panel" id="secEdge" hidden>
+      <h2>Which rooms face the hull edge</h2>
+      <p class="muted">How much of each room type's outline is hull edge, compared with the average room
+        (log2 ratio: +1 = twice as often, -1 = half as often). The optimizer uses this as <code>TAG_EDGE</code>.</p>
+      <div id="edgeBars" class="dbars"></div>
+    </section>
+
+    <section class="panel" id="secAdj" hidden>
+      <h2>Which rooms sit next to each other</h2>
+      <p class="muted">Touching room pairs compared with chance (log2 of observed / expected). Blue = top ships put
+        these types together more often than chance, orange = they keep them apart. Pairs seen too rarely are left grey
+        and are not used by the optimizer (<code>TAG_ADJ</code>). Hover a cell for the counts.</p>
+      <div class="tablewrap free"><table id="adjTable" class="heat"></table></div>
+      <div class="scale"><span>apart</span><i class="sw" style="background:var(--neg)"></i><i class="sw" style="background:var(--mid)"></i><i class="sw" style="background:var(--pos)"></i><span>together</span></div>
+    </section>
+
+    <section class="panel" id="secArmor" hidden>
+      <h2>Armor and lifts</h2>
+      <div id="armorBars" class="hbars"></div>
+      <div id="armorNotes" class="muted"></div>
+    </section>
+
+    <section class="panel" id="secCalib" hidden>
+      <h2>What the optimizer learned</h2>
+      <div id="calibText"></div>
+      <div class="tablewrap"><table id="calibRounds"></table></div>
+      <h3>Score weights</h3>
+      <p class="muted">Default weight and the weight fitted so that real top layouts beat the optimizer's own layouts.
+        Apply them on the optimizer page with <b>Scoring weights &gt; Use top-100 calibrated weights</b>.</p>
+      <div class="tablewrap free"><table id="calibTable"></table></div>
+    </section>
+  </main>
+
+  <footer class="muted">Data: top 100 of the PixyShip ladder, fetched weekly by the repository's GitHub Action
+    (<code>tools/pixyship_fetch_layouts.py</code>, analysed by <code>tools/analyze_top.py</code>).</footer>
+
+  <script src="js/categories.js"></script>
+  <script src="js/hulls.js"></script>
+  <script src="js/gamerooms.js"></script>
+  <script src="js/top.js"></script>
+  <script src="js/analyze.js"></script>
+</body>
+</html>

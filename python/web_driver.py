@@ -10,6 +10,8 @@ The original optimizer is NOT modified. It is configured through module-level co
   5. reports progress and results to the page as JSON strings through an `emit` callback.
 """
 import json
+import os
+import tempfile
 import random
 import sys
 import time
@@ -22,7 +24,7 @@ INT_KEYS = {"ARMOR_COUNT", "MAX_EMPTY_RUN", "LIFT_COST", "VENT_COUNT", "VENT_LIN
 FLOAT_KEYS = {"PRIORITY_WEIGHT", "W_ARMOR", "W_UNARMORED", "W_PRIORITY_UNARMORED", "W_FLOAT",
               "W_TRAVEL", "W_CORNER", "W_DISC", "CORNER_UNREACHABLE", "W_LIFT", "W_LTOUCH",
               "W_LIFT_BALANCE", "W_LIFT_COUNT", "W_GAP", "W_EMPTY", "W_RUN", "W_ISO", "W_SPREAD",
-              "SPREAD_CAP", "W_VENT", "W_ARMOR_UNDER", "PRIORITY_UNDER_MULT", "W_ARMOR_OVER", "W_SIDE", "W_CENTER"}
+              "SPREAD_CAP", "W_VENT", "W_ARMOR_UNDER", "PRIORITY_UNDER_MULT", "W_ARMOR_OVER", "W_SIDE", "W_CENTER", "W_PATTERN", "W_SHELL", "W_NC_CLUSTER", "W_LIFT_DENSITY"}
 # room types the optimizer pulls toward the middle of the combat block (CENTER_GROUPS)
 CENTER_CATS = {"antiair"}
 
@@ -68,6 +70,7 @@ def build_injection(cfg):
     if cr:
         lines.append(f"COMBAT_ARMOR_RANGE = ({int(cr[0])}, {int(cr[1])})")
     lines.append(f"PLACE_BONUS_ROOMS = {bool(cfg.get('place_bonus_rooms', True))}")
+    lines.append(f"WALK_NONCOMBAT = {bool(cfg.get('walk_noncombat', False))}")
     if "rooms" in cfg:
         groups, meta = categorized_rooms(cfg["rooms"])
     else:                                       # older page: separate tables per kind
@@ -82,12 +85,26 @@ def build_injection(cfg):
     lines.append(f"NONCOMBAT_ROOMS = {groups['noncombat']!r}")
     lines.append(f"RESOURCE_ROOMS = {groups['resource']!r}")
     lines.append(f"RESOURCE_ANYWHERE = {bool(cfg.get('resource_anywhere', True))}")
+    if meta is not None:
+        lines.append(f"ROOM_TAGS = {[md['cat'] for md in meta]!r}")
+    priors = cfg.get("top50_priors")
+    if priors and isinstance(priors, dict) and "edge_pref" in priors:
+        # the optimizer reads its top-50 numbers from a file at import time: hand them over as one
+        path = os.path.join(tempfile.gettempdir(), "top100_priors.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(priors, f)
+        lines.append(f"TOP50_FILE = {path!r}")
+    pat = cfg.get("patterns") or {}
+    adj = {str(k): float(v) for k, v in (pat.get("adj") or {}).items()}
+    edge = {str(k): float(v) for k, v in (pat.get("edge") or {}).items()}
+    lines.append(f"TAG_ADJ = {adj!r}")
+    lines.append(f"TAG_EDGE = {edge!r}")
     return "\n".join(lines), meta
 
 
 KINDS = ("priority", "combat", "noncombat", "resource")
 # symbols for non-combat / resource rows: upper case, never one the optimizer reserves (A L V P x . # ~)
-NC_SYMBOLS = "XBCDEFGHIJKMNOQRSTUWYZ"
+NC_SYMBOLS = "XBCDEFGHIJKMNOQRSTUWYZ!$%&*+=?@^<>:;'\"(){}[]|/\\,_`"
 
 
 def _armor_range(v, label):
@@ -206,6 +223,7 @@ def layout_json(m, res):
         priority_spread=info["spread"], vents=len(st["vents"]), vents_unlinked=info["vent_pen"],
         armor_touching_no_room=info["floating"], combat_rooms_without_armor=info["unarmored_rooms"],
         priority_rooms_without_armor=info["unarmored_priority"],
+        pattern=info.get("pattern", 0.0),
         sweet_spot_shortfall=info["range_under"], sweet_spot_excess=info["range_over"],
         center_rooms=len(getattr(m, "CENTER_IDX", ())), center_distance=info.get("center_dist", 0.0),
     )
@@ -216,6 +234,75 @@ def layout_json(m, res):
                 rooms=rooms, bonus=bonus, lifts=[list(l) for l in st["lifts"]],
                 vents=[list(v) for v in st["vents"]], armor=sorted([list(t) for t in info["armor"]], key=lambda t: (t[1], t[0])),
                 legend=legend, stats=stats)
+
+
+def template_state(m, tpl, rng):
+    """A legal layout of the current rooms that copies a top player's room placement as far as it fits."""
+    meta = getattr(m, "ROOM_META", None)
+    if not meta:
+        return None
+    st = m.clone(m.init_state(rng))
+    avail = [dict(x=int(r[0]), y=int(r[1]), w=int(r[2]), h=int(r[3]), cat=str(r[4])) for r in tpl.get("rooms", [])]
+    used = [False] * len(avail)
+    kind_of = {"reactor": "priority", "shield": "priority", "priority": "priority", "crew": "noncombat",
+               "noncombat": "noncombat", "resource": "resource"}
+    assigned = set()
+    tests = (lambda md, t: md["cat"] == t["cat"],
+             lambda md, t: md["kind"] == kind_of.get(t["cat"], "combat"),
+             lambda md, t: True)
+    for test in tests:
+        for r in range(m.NR):
+            if r in assigned:
+                continue
+            w, h = m.ROOMS[r][2], m.ROOMS[r][3]
+            for i, t in enumerate(avail):
+                if not used[i] and t["w"] == w and t["h"] == h and test(meta[r], t):
+                    used[i] = True
+                    assigned.add(r)
+                    st["pos"][r] = (t["x"], t["y"])
+                    break
+    lifts = sorted((tuple(int(v) for v in l) for l in tpl.get("lifts", [])), key=lambda l: l[1] - l[2])
+    lifts = [l for l in lifts if l[2] - l[1] >= 1][: m.MAX_LIFTS]
+    if len(lifts) >= m.MIN_LIFTS:
+        st["lifts"] = lifts
+    st["vents"] = []
+    # Rooms the top player did not have go into free space (largest first). If one does not fit, give up
+    # a copied spot (non-combat first) and try again.
+    release = sorted(assigned, key=lambda r: ({"resource": 0, "noncombat": 1, "combat": 2, "priority": 3}[meta[r]["kind"]],
+                                             -m.ROOMS[r][2] * m.ROOMS[r][3]))
+    for _ in range(len(release) + 1):
+        if _fill_free(m, st, assigned):
+            return st if m.occupancy(st) is not None else None
+        if not release:
+            break
+        assigned.discard(release.pop(0))
+    return None
+
+
+def _fill_free(m, st, anchored):
+    occ = set()
+    for r in anchored:
+        x, y = st["pos"][r]
+        occ.update((xx, yy) for yy in range(y, y + m.ROOMS[r][3]) for xx in range(x, x + m.ROOMS[r][2]))
+    for x, y0, y1 in st["lifts"]:
+        occ.update((x, y) for y in range(y0, y1 + 1))
+    if len(occ) != sum(m.ROOMS[r][2] * m.ROOMS[r][3] for r in anchored) + sum(y1 - y0 + 1 for _, y0, y1 in st["lifts"]):
+        return False                                  # copied rooms / lifts overlap each other
+    for r in sorted((r for r in range(m.NR) if r not in anchored), key=lambda r: -m.ROOMS[r][2] * m.ROOMS[r][3]):
+        w, h = m.ROOMS[r][2], m.ROOMS[r][3]
+        spot = None
+        for y in range(m.H - h + 1):
+            for x in range(m.W - w + 1):
+                if m.rect_ok(x, y, w, h, r) and not any((xx, yy) in occ for yy in range(y, y + h) for xx in range(x, x + w)):
+                    spot = (x, y)
+                    break
+            if spot:
+                break
+        if spot is None:
+            return False
+        st["pos"][r] = spot
+        occ.update((xx, yy) for yy in range(spot[1], spot[1] + h) for xx in range(spot[0], spot[0] + w))
+    return True
 
 
 def run(cfg_json, source_path, emit_fn):
@@ -294,10 +381,27 @@ def run(cfg_json, source_path, emit_fn):
         others = sorted((p for p in population if p[1][2]["state"] != best[2]["state"]), key=lambda p: -p[0])
         return [layout_json(m, best)] + [layout_json(m, r) for _, r in others[:4]]
 
+    # Top-100 layouts on this hull: place the user's rooms where the top player put rooms of the same
+    # type and size (then same kind and size, then same size), shove the rest out of the way, and use
+    # them as starting layouts.
+    tpl_states = []
+    for k, tpl in enumerate(cfg.get("templates") or []):
+        try:
+            st = template_state(m, tpl, random.Random(base_seed * 7 + k))
+        except _Stop:
+            break
+        except Exception:
+            st = None
+        if st:
+            tpl_states.append(st)
+    if tpl_states:
+        emit(dict(type="log", msg=f"Starting from {len(tpl_states)} top-100 layout{'s' if len(tpl_states) > 1 else ''} on this hull."))
+    page_seeds = list(cfg.get("seed_states") or [])
+
     # Starting layouts handed in by the page (previous run's best, or another core's best). Ones that do
     # not fit the current hull / room list are skipped.
     used = 0
-    for sd in cfg.get("seed_states") or []:
+    for si, sd in enumerate(page_seeds + [dict(pos=t["pos"], lifts=t["lifts"], vents=t["vents"]) for t in tpl_states]):
         try:
             st = dict(pos=[tuple(int(v) for v in p) for p in sd["pos"]],
                       lifts=[tuple(int(v) for v in l) for l in sd["lifts"]],
@@ -311,13 +415,14 @@ def run(cfg_json, source_path, emit_fn):
             continue
         if not res:
             continue
-        used += 1
+        used += si < len(page_seeds)
         population = m.add_population(population, (score, res), pop_size)
         if score > best_score:
             best, best_score = res, score
             best_box[0] = score
     if used:
         emit(dict(type="log", msg=f"Continuing from {used} saved layout{'s' if used > 1 else ''}."))
+    if best is not None:
         emit(dict(type="best", score=best_score, layouts=top_layouts(), restart=0))
     weights = list(m.OP_WEIGHTS)
     att_tot, succ_tot = [0.0] * m.NOPS, [0.0] * m.NOPS

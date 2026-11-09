@@ -33,6 +33,9 @@ const DEFAULTS = {
   ],
   resource_anywhere: true,
   place_bonus_rooms: true,
+  walk_noncombat: true,     // crew walk through every room (as in the game), not only combat rooms
+  use_top: true,            // start searches from top-100 layouts on the same hull
+  learn_top: true,          // score with patterns and habits learned from the top 100
   priority_range: [3, 6],
   combat_range: [2, 6],
   settings: {
@@ -43,34 +46,10 @@ const DEFAULTS = {
     W_TRAVEL: 5, W_CORNER: 4, W_DISC: 500, CORNER_UNREACHABLE: 60,
     W_LIFT: 35, W_LTOUCH: 25, W_LIFT_BALANCE: 50, W_LIFT_COUNT: 8,
     W_GAP: 12, W_EMPTY: 6, W_RUN: 6, W_ISO: 25,
-    W_SPREAD: 1.5, SPREAD_CAP: 24, W_VENT: 15, W_CENTER: 3,
+    W_SPREAD: 1.5, SPREAD_CAP: 24, W_VENT: 15, W_CENTER: 3, W_PATTERN: 3, W_SHELL: 3, W_NC_CLUSTER: 15, W_LIFT_DENSITY: 20,
   },
   search: { iters: 1200, polish: 300, restarts: 0, time_limit: 300, seed: 1, stagnation: 0, population: 24, cores: 0 },
 };
-
-// Room categories. kind = how the optimizer treats the room:
-//   priority  = gets the most armor (PRIORITY_WEIGHT) and its own sweet spot
-//   combat    = armored, walkable, counted for crew travel
-//   noncombat = kept away from armor and lifts
-//   resource  = goes on r tiles in the hull (or x tiles if allowed), scored like non-combat
-// Sizes are only starting suggestions for the "+ Add" buttons; edit them to match your rooms.
-const ROOM_CATEGORIES = [
-  { id: "reactor", label: "Reactor", kind: "priority", color: "#d94b4b", size: [3, 2] },
-  { id: "shield", label: "Shield generator", kind: "priority", color: "#e07a9c", size: [3, 2] },
-  { id: "priority", label: "Other priority", kind: "priority", color: "#b03a5b", size: [3, 2] },
-  { id: "laser", label: "Laser", kind: "combat", color: "#3d6fd1", size: [2, 2] },
-  { id: "antiair", label: "Anti-air", kind: "combat", color: "#8466d8", size: [2, 2] },
-  { id: "missile", label: "Missile", kind: "combat", color: "#d98a3d", size: [3, 2] },
-  { id: "hangar", label: "Hangar", kind: "combat", color: "#3f8f9f", size: [4, 2] },
-  { id: "utility", label: "Utility", kind: "combat", color: "#8a90a6", size: [2, 2] },
-  { id: "combat", label: "Other combat", kind: "combat", color: "#5b7fbf", size: [2, 2] },
-  { id: "crew", label: "Bedroom", kind: "noncombat", color: "#9b4f7f", size: [3, 2] },
-  { id: "noncombat", label: "Other non-combat", kind: "noncombat", color: "#b5934a", size: [2, 2] },
-  { id: "resource", label: "Resource", kind: "resource", color: "#3b6fa0", size: [2, 2] },
-];
-const KIND_LABELS = { priority: "Priority (most armor)", combat: "Combat", noncombat: "Non-combat", resource: "Resource space" };
-const CAT = Object.fromEntries(ROOM_CATEGORIES.map((c) => [c.id, c]));
-const catOf = (id) => CAT[id] || CAT.combat;
 
 const STRUCTURE_FIELDS = [
   ["ARMOR_COUNT", "Armor tiles"], ["MIN_LIFTS", "Min lifts"], ["MAX_LIFTS", "Max lifts"],
@@ -96,6 +75,9 @@ const WEIGHT_GROUPS = [
     ["W_SPREAD", "Priority room spacing reward"], ["SPREAD_CAP", "Spacing reward cap"], ["W_VENT", "Unlinked vent"]]],
   ["Anti-air placement", [
     ["W_CENTER", "Anti-air away from combat middle (per tile)"]]],
+  ["Learned from the top 100 (when enabled under Search)", [
+    ["W_PATTERN", "Room neighbours / edge use like top ships"], ["W_SHELL", "Hull-edge use per room kind"],
+    ["W_NC_CLUSTER", "Non-combat room not grouped"], ["W_LIFT_DENSITY", "Lift count outside top-100 range"]]],
 ];
 const SEARCH_FIELDS = [
   ["iters", "Annealing steps per restart"], ["polish", "Polish steps per restart"],
@@ -161,7 +143,7 @@ function buildHull() {
     const all = rows.join(""), tiles = all.split("x").length - 1, res = all.split("r").length - 1;
     $("hullInfo").textContent = ok ? `${rows[0].length} x ${rows.length}, ${tiles + res} usable tiles` + (res ? ` (${res} resource space)` : "") : "Invalid: rows must be equal length and use only x, r and .";
   };
-  t.addEventListener("input", () => { upd(); if ($("roomSummary").childElementCount) updateRoomSummary(); }); upd();
+  t.addEventListener("input", () => { upd(); if ($("roomSummary").childElementCount) updateRoomSummary(); updateTopNote(); }); upd();
 }
 
 // ---------------------------------------------------------------- ship hull picker (js/hulls.js)
@@ -407,6 +389,53 @@ function buildWeights() {
 function buildSearch() { buildGrid("search", SEARCH_FIELDS, cfgState.search, "1"); }
 function buildAll() { buildHull(); buildRooms(); buildStructure(); buildWeights(); buildSearch(); }
 
+// ---------------------------------------------------------------- top 100 (js/top.js)
+function hullShipIds() {
+  const rows = cfgState.hull.split("\n").map((r) => r.trim()).filter(Boolean);
+  return Hulls.count ? Hulls.byRows(rows).map((s) => s.id).filter((id) => id != null) : [];
+}
+function updateTopNote() {
+  const box = $("topNote");
+  if (!box) return;
+  if (!Top100.layouts.length || !Hulls.count) { box.textContent = "Top-100 data not loaded."; return; }
+  const ids = hullShipIds();
+  const lays = ids.flatMap((id) => Top100.forShip(id));
+  if (!lays.length) {
+    const ship = ids.length ? Hulls.byId(ids[0]) : null;
+    box.textContent = (ship ? `${ship.name}: ` : "") + "no top-100 player uses this hull, so the search starts from scratch. " +
+      "Pick a popular hull on the Top 100 page to start from real layouts.";
+    return;
+  }
+  const best = Math.min(...lays.map((l) => l.rank));
+  box.textContent = `${lays.length} top-100 player${lays.length > 1 ? "s use" : " uses"} this hull (${lays[0].ship_name}, best rank #${best}). ` +
+    `The search starts from their layouts, with your rooms put where they placed the same type and size.`;
+}
+function updateCalibNote() {
+  const a = Top100.analysis, c = a && a.calibration;
+  const btn = $("useCalib");
+  btn.disabled = !c;
+  if (!c) { $("calibNote").textContent = ""; return; }
+  const last = c.rounds[c.rounds.length - 1] || {};
+  const pct = (v) => (v == null ? "?" : Math.round(v * 100) + "%");
+  $("calibNote").textContent = `Fitted on ${c.ships_used} top ships (${(a.updated || "").slice(0, 10)}). Real top layouts beat the optimizer's own on ` +
+    `${pct((last.real_beats_optimizer_before_fit || {}).test)} of held-out ships with the default weights, ${pct((last.real_beats_optimizer_after_fit || {}).test)} with these.`;
+}
+function buildTopUi() {
+  $("useTop").checked = cfgState.use_top;
+  $("useTop").onchange = (e) => { cfgState.use_top = e.target.checked; saveSettings(); };
+  $("learnTop").checked = cfgState.learn_top;
+  $("learnTop").onchange = (e) => { cfgState.learn_top = e.target.checked; saveSettings(); };
+  $("walkNc").checked = cfgState.walk_noncombat;
+  $("walkNc").onchange = (e) => { cfgState.walk_noncombat = e.target.checked; saveSettings(); };
+  $("useCalib").onclick = () => {
+    const c = Top100.analysis && Top100.analysis.calibration;
+    if (!c) return;
+    Object.entries(c.weights).forEach(([k, v]) => { if (k in cfgState.settings) cfgState.settings[k] = +(+v).toPrecision(4); });
+    saveSettings(); buildWeights();
+    $("calibNote").textContent = "Calibrated weights applied. Reset to defaults puts the old ones back.";
+  };
+}
+
 // ---------------------------------------------------------------- worker control (one per CPU core)
 // Each worker is a separate Python runtime running the optimizer with its own random seed. The search runs
 // in rounds: when a round ends, every core starts the next one from the best layouts found by ALL cores,
@@ -480,7 +509,7 @@ function showProgress() {
   $("barFill").style.width = frac == null ? "100%" : (Math.min(1, frac) * 100).toFixed(1) + "%";
   const total = run.restarts ? `/${run.restarts}` : "";
   const cores = `${pool.length} core${pool.length > 1 ? "s" : ""}`;
-  const round = run.rounds ? ` | round ${run.round}` : "";
+  const round = run.rounds ? ` | round ${run.round} (${Math.round(run.roundLen)}s)` : "";
   $("progressText").textContent = `Restart ${doneNow}${total} on ${cores}${round}` + (best != null ? ` | best score ${best.toFixed(1)}` : "") + ` | ${elapsed.toFixed(0)}s elapsed`;
 }
 function handle(m, slot) {
@@ -512,20 +541,24 @@ function startRound() {
     const search = Object.assign({}, cfg.search);
     search.seed = (Math.round(cfg.search.seed) || 1) * 1000 + r.round * 37 + i * 7919;
     if (r.rounds) {
-      search.time_limit = r.timeLimit ? Math.max(1, Math.min(ROUND_SECONDS, r.timeLimit - (Date.now() - r.t0) / 1000)) : ROUND_SECONDS;
+      search.time_limit = r.timeLimit ? Math.max(1, Math.min(r.roundLen, r.timeLimit - (Date.now() - r.t0) / 1000)) : r.roundLen;
       search.restarts = 0;
     } else if (r.restarts) {
       search.restarts = Math.floor(r.restarts / pool.length) + (i < r.restarts % pool.length ? 1 : 0);
       if (!search.restarts) { p.finished = true; return; }
     }
-    p.w.postMessage({ type: "start", cfg: Object.assign({}, cfg, { search, seed_states: seeds }) });
+    const templates = r.round === 1 ? r.templates : [];
+    p.w.postMessage({ type: "start", cfg: Object.assign({}, cfg, { search, seed_states: seeds, templates }) });
   });
   if (pool.every((p) => p.finished)) roundFinished();
 }
 function roundFinished() {
   const r = run;
   if (!r) return;
-  r.doneBefore += pool.reduce((a, p) => a + (p.prog ? p.prog.done : 0), 0);
+  const doneThisRound = pool.reduce((a, p) => a + (p.prog ? p.prog.done : 0), 0);
+  r.doneBefore += doneThisRound;
+  // On a big hull one search pass can take longer than a round; then make rounds longer so passes finish.
+  if (!doneThisRound) r.roundLen = Math.min(r.roundLen * 2, 720);
   pool.forEach((p) => { p.prog = null; });
   const elapsed = (Date.now() - r.t0) / 1000;
   if (r.rounds && (!r.timeLimit || elapsed < r.timeLimit - 1)) { startRound(); return; }
@@ -545,6 +578,8 @@ function buildConfig() {
     combat_range: cfgState.combat_range, place_bonus_rooms: cfgState.place_bonus_rooms,
     rooms: cfgState.rooms.map((r) => { const c = catOf(r.cat); return { name: r.name || c.label, short: r.short || "", cat: c.id, catLabel: c.label, kind: c.kind, w: r.w, h: r.h, count: r.count, armor: c.kind === "priority" || c.kind === "combat" ? (r.armor || "") : "" }; }),
     resource_anywhere: cfgState.resource_anywhere, search: cfgState.search,
+    walk_noncombat: cfgState.walk_noncombat,
+    ...(cfgState.learn_top && Top100.analysis ? { patterns: Top100.analysis.patterns, top50_priors: Top100.analysis.priors } : {}),
   };
 }
 function start() {
@@ -559,10 +594,11 @@ function start() {
   ensurePool(wantedCores());
   running = true;
   run = {
-    t0: Date.now(), round: 0, doneBefore: 0,
+    t0: Date.now(), round: 0, doneBefore: 0, roundLen: ROUND_SECONDS,
     timeLimit: Math.max(0, +sc.time_limit || 0), restarts: Math.max(0, Math.round(+sc.restarts || 0)),
     rounds: !(+sc.restarts) && !(+sc.stagnation),            // rounds share results between cores
     firstSeeds: resume ? loadSavedBest() : [],
+    templates: cfgState.use_top ? Top100.templates(hullShipIds(), 6) : [],
   };
   $("startBtn").disabled = true;
   $("stopBtn").disabled = false;
@@ -709,7 +745,7 @@ function coordsText(l) {
 // ---------------------------------------------------------------- wire up
 $("startBtn").onclick = start;
 $("stopBtn").onclick = stop;
-$("resetBtn").onclick = () => { if (confirm("Reset all settings to the defaults?")) { cfgState = clone(DEFAULTS); saveSettings(); buildAll(); } };
+$("resetBtn").onclick = () => { if (confirm("Reset all settings to the defaults?")) { cfgState = clone(DEFAULTS); saveSettings(); buildAll(); buildTopUi(); updateTopNote(); } };
 $("dlJson").onclick = () => download("ship-layout.json", JSON.stringify(layouts[activeIdx], null, 2), "application/json");
 $("dlSvg").onclick = () => download("ship-layout.svg", layoutSvg(layouts[activeIdx]), "image/svg+xml");
 $("copyCoords").onclick = async () => {
@@ -718,6 +754,20 @@ $("copyCoords").onclick = async () => {
 };
 buildAll();
 buildShipFinder();
+buildTopUi();
+Promise.all([Hulls.load(false).catch(() => null), Top100.load()]).then(() => {
+  const id = parseInt(new URLSearchParams(location.search).get("ship"), 10);   // link from the Top 100 page
+  const ship = isNaN(id) ? null : Hulls.byId(id);
+  if (ship) {
+    hullBefore = cfgState.hull;
+    $("hull").value = ship.rows.join("\n");
+    $("hull").dispatchEvent(new Event("input"));
+    $("hullUndo").hidden = false;
+    $("shipStatus").textContent = `Hull set to ${ship.name} from the Top 100 page.`;
+    history.replaceState(null, "", location.pathname);
+  }
+  updateTopNote(); updateCalibNote();
+});
 GameRooms.load().then((n) => {
   if (!n) return;
   GameRooms.fillDatalist($("gameRoomNames"));
