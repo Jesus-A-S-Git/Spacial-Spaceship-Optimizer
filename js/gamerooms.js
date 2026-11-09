@@ -54,5 +54,12 @@ const GameRooms = (() => {
     dl.innerHTML = "";
     list.forEach((g) => { const o = document.createElement("option"); o.value = g.name; o.label = describe(g); dl.append(o); });
   }
-  return { load, find, describe, fillDatalist, get count() { return list.length; }, get updated() { return updated; } };
+  // category for a room in top-100 data (also armor / lift / corridor)
+  function catOf(type, name) {
+    if (type === "Armor" || type === "Wall") return "armor";
+    if (type === "Lift") return "lift";
+    if (type === "Corridor") return "corridor";
+    return catFor(type, name || "");
+  }
+  return { load, find, describe, fillDatalist, catOf, get count() { return list.length; }, get updated() { return updated; } };
 })();

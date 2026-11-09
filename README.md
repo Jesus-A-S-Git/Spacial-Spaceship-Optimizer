@@ -7,25 +7,33 @@ A static website that runs the Python ship layout optimizer in your browser usin
 
 ```
 ship-optimizer-site/
-├── index.html                   page structure
+├── index.html                   optimizer page
+├── analyze.html                 Top 100 analysis page
 ├── css/
 │   └── style.css                styling
 ├── js/
 │   ├── app.js                   settings forms, start/stop, SVG layout drawing, downloads
 │   ├── hulls.js                 "Find a ship hull" box (browser version of tools/grab_hull.py)
 │   ├── gamerooms.js             room-name autocomplete with real game sizes and types
+│   ├── categories.js            room types and colours (shared by both pages)
+│   ├── top.js                   top-100 data: hull matching, starting layouts
+│   ├── analyze.js               Top 100 page charts and layout gallery
 │   └── worker.js                Web Worker: loads Pyodide and runs the optimizer off the main thread
 ├── python/
 │   ├── ship_layout_finder.py    YOUR optimizer, unmodified
 │   └── web_driver.py            glue: injects web settings, runs the search loop, returns JSON
 ├── data/
 │   ├── ships.json               every ship hull, built by tools/build_ship_list.py
-│   └── rooms.json               every room design (size, type), built by tools/build_room_list.py
+│   ├── rooms.json               every room design (size, type), built by tools/build_room_list.py
+│   ├── top_layouts.json         top-100 ladder layouts (compact), built by tools/analyze_top.py
+│   └── top_analysis.json        top-100 statistics, learned patterns and calibrated weights
 ├── tools/
 │   ├── grab_hull.py             command-line hull grabber
 │   ├── build_ship_list.py       writes data/ships.json (reuses grab_hull.py)
-│   └── build_room_list.py       writes data/rooms.json
-├── .github/workflows/refresh-ships.yml   rebuilds both lists weekly
+│   ├── build_room_list.py       writes data/rooms.json
+│   ├── pixyship_fetch_layouts.py   fetches the top-100 ladder layouts from PixyShip
+│   └── analyze_top.py           analyses them and calibrates the optimizer
+├── .github/workflows/refresh-ships.yml   rebuilds all data weekly (ships, rooms, top 100)
 ├── .nojekyll                    tells GitHub Pages to serve files as-is
 └── README.md
 ```
@@ -56,6 +64,25 @@ type are filled in from `data/rooms.json`. The game's room types map to the page
 Results show each room in its type's colour, labelled with the initials of its name, and the coordinates
 table lists the type. The anti-air pull is `CENTER_GROUPS` / `W_CENTER` (section 9 of the optimizer config); its strength is
 *Scoring weights > Anti-air placement* on the page. Types and colours are defined in `ROOM_CATEGORIES` in `js/app.js`.
+
+## Learning from the top 100
+
+Every Monday the **Refresh game data and top-100 layouts** Action fetches the top 100 ladder ships from
+PixyShip and runs `tools/analyze_top.py` (run it by hand from the Actions tab any time). The **Top 100
+analysis** page shows the hulls they fly, their layouts, rooms per ship, armor and lifts, and what the
+optimizer learned:
+
+* **Start from top layouts** (*Search*): if top-100 players fly your hull, the search starts from their
+  layouts, with your rooms put where they placed rooms of the same type and size. Open a hull from the
+  Top 100 page to get one of these.
+* **Learned patterns** (*Search > Score with patterns learned from the top 100*): which room types top ships
+  put side by side and on the hull edge (optimizer section 10, `TAG_ADJ` / `TAG_EDGE` / `W_PATTERN`), plus
+  the `--top50` habits (edge use per kind, grouped non-combat rooms, lift spacing).
+* **Calibrated weights** (*Scoring weights > Use top-100 calibrated weights*): the optimizer builds its own
+  layout for each top ship's hull and rooms, and the weights are fitted so the real top layout scores
+  higher (odd ranks fit, even ranks check).
+* **Walking** (*Armor, lifts and vents*): crew walk through every room, as in the game (optimizer
+  `WALK_NONCOMBAT`). The command line keeps the original combat-floors-only model unless you set it.
 
 ## Ship hulls
 

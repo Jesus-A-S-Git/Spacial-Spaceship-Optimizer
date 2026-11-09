@@ -44,7 +44,8 @@ def main():
         if key in seen:
             continue
         seen.add(key)
-        ships.append({"name": name, "hull": rows})
+        sid = g["pick"](e, "shipdesignid", "id")
+        ships.append({"name": name, "id": int(sid) if str(sid or "").isdigit() else None, "hull": rows})
     if not ships:
         sys.exit("No ship designs with a grid were found; data/ships.json was not changed.")
     ships.sort(key=lambda s: s["name"].lower())

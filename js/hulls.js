@@ -63,7 +63,8 @@ const Hulls = (() => {
       const name = nameOf(e), key = name + "|" + rows.join("/");
       if (seen.has(key)) continue;
       seen.add(key);
-      list.push({ name, rows, tiles: rows.join("").split("x").length - 1 });
+      const id = parseInt(pick(e, "id", "shipdesignid"), 10);
+      list.push({ name, rows, id: isNaN(id) ? null : id, tiles: rows.join("").split("x").length - 1 });
     }
     return list.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
   }
@@ -125,5 +126,11 @@ const Hulls = (() => {
     }
     return exact.concat(starts, has).slice(0, limit);
   }
-  return { load, loadFile, search, parseText, get count() { return ships ? ships.length : 0; }, get source() { return sourceLabel; } };
+  function byId(id) { return ships ? ships.find((s) => s.id === id) || null : null; }
+  function byRows(rows) {
+    if (!ships) return [];
+    const key = rows.join("/").replace(/r/g, "x");
+    return ships.filter((s) => s.rows.join("/") === key);
+  }
+  return { load, loadFile, search, parseText, byId, byRows, get count() { return ships ? ships.length : 0; }, get source() { return sourceLabel; } };
 })();

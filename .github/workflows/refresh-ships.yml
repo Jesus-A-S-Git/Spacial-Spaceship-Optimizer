@@ -1,4 +1,4 @@
-name: Refresh ship and room lists
+name: Refresh game data and top-100 layouts
 
 # Rebuilds data/ships.json and data/rooms.json from the official Pixel Starships API, so the website's
 # "Find a ship hull" box and room-name autocomplete stay current. Runs weekly, and on demand from the Actions tab.
@@ -13,6 +13,7 @@ permissions:
 jobs:
   refresh:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -22,14 +23,26 @@ jobs:
         run: python3 tools/build_ship_list.py
       - name: Build room list
         run: python3 tools/build_room_list.py
+      - name: Fetch top-100 player layouts (PixyShip)
+        # PixyShip can be slow or refuse requests; the ship and room lists are still saved if this fails
+        continue-on-error: true
+        run: |
+          python3 tools/pixyship_fetch_layouts.py --top 100 --out build/top --delay 1
+      - name: Analyse top-100 layouts and calibrate the optimizer
+        # writes data/top_layouts.json (compact) and data/top_analysis.json (stats, patterns, weights)
+        continue-on-error: true
+        run: |
+          if [ -f build/top/layouts.json ]; then
+            python3 tools/analyze_top.py --raw build/top/layouts.json
+          fi
       - name: Commit if changed
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898273+github-actions[bot]@users.noreply.github.com"
-          git add data/ships.json data/rooms.json
+          git add data/
           if git diff --cached --quiet; then
-            echo "Ship and room lists unchanged."
+            echo "Data unchanged."
           else
-            git commit -m "Refresh ship and room lists"
+            git commit -m "Refresh game data and top-100 layouts"
             git push
           fi
