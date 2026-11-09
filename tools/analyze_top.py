@@ -336,18 +336,21 @@ def build_label(off, dfn, spread):
 
 def builds(ships):
     """Offense / defense build of every top ship, plus what the builds have in common."""
+    fam = room_designs()
     profiles = [(s, *ship_profile(s)) for s in ships]
     spread = {}
     for k, _ in DEFENSE:
         q = q3([d[k] for _, _, d in profiles])
         spread[k] = (q[0], q[1], q[2])
-    per_ship, groups = [], defaultdict(list)
+    per_ship, groups, members = [], defaultdict(list), defaultdict(list)
     for s, off, dfn in profiles:
         main, parts, dparts = build_label(off, dfn, spread)
         L = s.lay
         per_ship.append(dict(rank=L["rank"], name=L["name"], ship=L["ship_name"], trophies=L.get("trophies"),
-                             build=main, label=" · ".join([main] + parts + dparts), offense=off, defense=dfn))
+                             build=main, label=" · ".join([main] + parts + dparts), offense=off, defense=dfn,
+                             power={k: v for k, v in ship_power(s, fam).items() if k != "by_cat"} if fam else None))
         groups[main].append((L, off, dfn))
+        members[main].append(s)
     summary = []
     for main, items in groups.items():
         ranks = [L["rank"] for L, _, _ in items]
@@ -355,7 +358,8 @@ def builds(ships):
             build=main, ships=len(items), best_rank=min(ranks), median_rank=statistics.median(ranks),
             trophies=round(statistics.mean(L.get("trophies") or 0 for L, _, _ in items)),
             offense={k: round(statistics.mean(o[k] for _, o, _ in items), 1) for k, _ in OFFENSE},
-            defense={k: round(statistics.mean(d[k] for _, _, d in items), 1) for k, _ in DEFENSE}))
+            defense={k: round(statistics.mean(d[k] for _, _, d in items), 1) for k, _ in DEFENSE},
+            power=power_summary(members[main], fam) if fam else None))
     summary.sort(key=lambda b: (-b["ships"], b["best_rank"]))
     return dict(ships=per_ship, summary=summary,
                 spread={k: list(v) for k, v in spread.items()},
@@ -372,10 +376,11 @@ def weapon_pair(off):
     return order[0], (order[1] if off[order[1]] / total >= 0.25 else None)
 
 
-def room_profile(group):
+def room_profile(group, fam=None):
     """What a group of top ships builds, per 100 usable hull tiles, so it scales to any hull size.
     cats: category -> [rooms per 100 tiles, room tiles per 100 tiles, ships with it (share)]
     families: category -> [[room name, w, h, rooms per ship, share of ships with it]] (most used first)"""
+    designs = fam
     n = len(group)
     tiles = [len(s.inside) or 1 for s in group]
     cats, fam, has = defaultdict(lambda: [0.0, 0.0]), defaultdict(Counter), defaultdict(Counter)
@@ -401,6 +406,7 @@ def room_profile(group):
         cats={c: [round(v[0] / n, 3), round(v[1] / n, 2), round(with_cat[c] / n, 2)] for c, v in cats.items()},
         families={c: [[nm, *sizes[nm], round(k / n, 2), round(has[c][nm] / n, 2)] for nm, k in cnt.most_common(10)]
                   for c, cnt in fam.items()},
+        power=power_summary(group, designs) if designs else None,
     )
 
 
@@ -417,11 +423,15 @@ def room_designs(path=os.path.join(ROOT, "data", "rooms.json")):
     return fam
 
 
-def power_ratio(s, fam):
-    """Power the reactors make / power the rooms can draw, with every room at the best level the ship's
-    level allows (top players do not power every room at once). None if unknown."""
+def ship_power(s, fam):
+    """Power of one top ship, every room at the best level the ship's level allows (room levels are not in
+    the ladder data): make = what its reactors generate, use = what all its systems draw at full power,
+    by_cat = the draw per room category. Cached on the ship."""
+    if getattr(s, "power", None) is not None:
+        return s.power
     lvl = s.lay.get("ship_level")
     use = make = 0
+    by_cat = Counter()
     for r in s.rooms:
         ds = [d for d in fam.get(r["name"], []) if lvl is None or d[1] is None or d[1] <= lvl]
         if not ds:
@@ -429,7 +439,31 @@ def power_ratio(s, fam):
         d = max(ds)
         use += d[2] or 0
         make += d[3] or 0
-    return make / use if use and make else None
+        if d[2]:
+            by_cat[r["cat"]] += d[2]
+    s.power = dict(make=make, use=use, ratio=round(make / use, 3) if use and make else None, by_cat=dict(by_cat))
+    return s.power
+
+
+def power_ratio(s, fam):
+    """Power the reactors make / power all systems can draw (top players do not power every room at once)."""
+    return ship_power(s, fam)["ratio"]
+
+
+def power_summary(group, fam):
+    """Average power made and needed by a group of top ships, the ratio (quartiles) and where the power goes."""
+    ps = [ship_power(s, fam) for s in group]
+    ps = [p for p in ps if p["use"] and p["make"]]
+    if not ps:
+        return None
+    use = sum(p["use"] for p in ps)
+    by_cat = Counter()
+    for p in ps:
+        by_cat.update(p["by_cat"])
+    return dict(ships=len(ps), make=round(statistics.mean(p["make"] for p in ps), 1),
+                use=round(statistics.mean(p["use"] for p in ps), 1),
+                ratio=[round(v, 3) for v in q3([p["ratio"] for p in ps])],
+                draw={c: round(v / use, 3) for c, v in by_cat.most_common()})
 
 
 def recommendations(ships):
@@ -446,9 +480,9 @@ def recommendations(ships):
     ratios = [v for v in (power_ratio(s, fam) for s in ships) if v]
     return dict(
         weapons=[list(t) for t in OFFENSE],
-        all=room_profile(ships),
-        builds={k: room_profile(v) for k, v in sorted(by_pair.items(), key=lambda kv: -len(kv[1]))},
-        primary={k: room_profile(v) for k, v in by_primary.items()},
+        all=room_profile(ships, fam),
+        builds={k: room_profile(v, fam) for k, v in sorted(by_pair.items(), key=lambda kv: -len(kv[1]))},
+        primary={k: room_profile(v, fam) for k, v in by_primary.items()},
         power_ratio=[round(v, 3) for v in q3(ratios)] if ratios else None,
     )
 

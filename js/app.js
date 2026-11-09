@@ -966,8 +966,12 @@ function renderPlan(r) {
       el("td", { text: `${x.w}x${x.h}` }), el("td", { class: "num", text: String(x.level) }), el("td", { class: "num", text: pw })));
   });
   const notes = r.notes.slice();
-  if (GameRooms.hasTiers && r.power.use) notes.unshift(`Power: reactors make ${r.power.make} of the ${r.power.use} the rooms can draw at once ` +
-    `(${Math.round((100 * r.power.make) / r.power.use)}%; top-100 ships make about ${Math.round(100 * r.power.top)}% and power rooms as needed).`);
+  if (GameRooms.hasTiers && r.power.use) {
+    const b = r.power.build, P = (v) => Math.round(100 * v) + "%";
+    notes.unshift(`Power: reactors make ${r.power.make} of the ${r.power.use} all systems need at full power (${P(r.power.make / r.power.use)}). ` +
+      `Top-100 ${r.build.toLowerCase()} ships make ${P(r.power.top)} (middle half ${P(r.power.range[0])}-${P(r.power.range[1])})` +
+      (b ? `: ${b.make} made against ${b.use} needed on average. They power systems as needed, not all at once.` : "."));
+  }
   else notes.unshift("Room tiers are not in this site's room list yet, so every room level is allowed (they arrive with the next data refresh).");
   if (r.rooms.some((x) => x.fallback)) notes.push("* No room top ships use for this type is available at this level; a room of the same type is suggested instead.");
   if (r.locked.length && r.level != null) {

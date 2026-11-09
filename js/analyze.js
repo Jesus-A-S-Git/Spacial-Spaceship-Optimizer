@@ -212,12 +212,14 @@ function buildsSection(a) {
     ...b.summary.map((g) => el("option", { value: g.build, text: `${g.build} (${g.ships})` })));
   const list = () => {
     const tb = $("buildShips");
-    tb.replaceChildren(el("tr", {}, el("th", { class: "num", text: "Rank" }), el("th", { text: "Player" }), el("th", { text: "Hull" }), el("th", { text: "Build" })));
+    tb.replaceChildren(el("tr", {}, el("th", { class: "num", text: "Rank" }), el("th", { text: "Player" }), el("th", { text: "Hull" }), el("th", { text: "Build" }),
+      el("th", { class: "num", text: "Power made / needed", title: "Reactor power / power all systems draw at full power" })));
     b.ships.filter((s) => !sel.value || s.build === sel.value).sort((x, y) => x.rank - y.rank).forEach((s) => {
       const off = b.offense_types.filter(([k]) => s.offense[k]).map(([k, n]) => `${s.offense[k]} ${n.toLowerCase()}`).join(", ");
       const dfn = b.defense_types.map(([k, n]) => `${s.defense[k]} ${n}`).join(", ");
       tb.append(el("tr", {}, el("td", { class: "num", text: "#" + s.rank }), el("td", { text: s.name }), el("td", { text: s.ship }),
-        el("td", { class: "buildcell", text: s.label, title: `Weapons: ${off || "none"}\nDefense: ${dfn}` })));
+        el("td", { class: "buildcell", text: s.label, title: `Weapons: ${off || "none"}\nDefense: ${dfn}` }),
+        el("td", { class: "num", text: s.power && s.power.use ? `${s.power.make} / ${s.power.use} (${pct(s.power.ratio)})` : "-" })));
     });
   };
   sel.onchange = list;
@@ -295,7 +297,8 @@ function explorer(a) {
     $("exPlan").hidden = k === "*all";
     if (k !== "*all") $("exPlan").href = planLink(k);
     $("exInfo").textContent = `${pr.ships} ship${pr.ships > 1 ? "s" : ""} (ranks ${pr.ranks.slice(0, 8).map((x) => "#" + x).join(", ")}${pr.ranks.length > 8 ? ", ..." : ""}), ` +
-      `hulls of ${fmt(pr.hull_tiles, 0)} tiles on average. Per 100 hull tiles: ${fmt(pr.armor)} armor tiles; per ship ${fmt(pr.lifts)} lift columns and ${fmt(pr.vents)} vents.`;
+      `hulls of ${fmt(pr.hull_tiles, 0)} tiles on average. Per 100 hull tiles: ${fmt(pr.armor)} armor tiles; per ship ${fmt(pr.lifts)} lift columns and ${fmt(pr.vents)} vents.` +
+      (pr.power ? ` Power: ${fmt(pr.power.make)} made against ${fmt(pr.power.use)} needed at full power (${pct(pr.power.ratio[1])}).` : "");
     const t = $("exTable");
     t.replaceChildren(el("tr", {}, el("th", { text: "Type" }), el("th", { class: "num", text: "Rooms / 100 tiles" }),
       el("th", { class: "num", text: "Tiles / 100" }), el("th", { class: "num", text: "Ships with it" }), el("th", { text: "Rooms they use (per ship)" })));
@@ -326,6 +329,49 @@ function trophySection(a) {
       el("div", { class: "zero" }), el("div", { class: "fill " + (v >= 0 ? "pos" : "neg"), style: `width:${Math.min(50, Math.abs(v) * 100)}%` }));
     box.append(el("div", { class: "lab" }, ...(color ? [swatch(color)] : []), document.createTextNode(label(k))), track, el("div", { class: "val", text: (v > 0 ? "+" : "") + fmt(v, 2) }));
   });
+  return true;
+}
+
+
+// ---------------------------------------------------------------- power
+function powerSection(a) {
+  const r = a.recommend;
+  if (!r || !r.all.power) return false;
+  const P = r.all.power;
+  const ships = (a.builds ? a.builds.ships : []).filter((s) => s.power && s.power.use);
+  const makes = ships.map((s) => s.power.make), uses = ships.map((s) => s.power.use);
+  const same = makes.length && makes.filter((m) => m === P.make || Math.abs(m - P.make) < 0.5).length;
+  $("powerTiles").replaceChildren(...[
+    [fmt(P.make), "power made by reactors (average)"],
+    [fmt(P.use), "power all systems need at full power (average)"],
+    [pct(P.ratio[1]), `made / needed (median; middle half ${pct(P.ratio[0])}-${pct(P.ratio[2])})`],
+    ...(uses.length ? [[`${Math.min(...uses)}-${Math.max(...uses)}`, "power needed, lowest to highest ship"]] : []),
+    ...(same ? [[`${same} of ${makes.length}`, `ships make exactly ${fmt(P.make)} power`]] : []),
+  ].map(([v, t]) => el("div", { class: "tile" }, el("b", { text: String(v) }), el("span", { text: t }))));
+  const name = (k) => {
+    const [p, q] = k.split("+");
+    const n = (x) => WEAPON_NAMES[x].replace(/s$/, "");
+    return q ? `${n(p)}/${n(q)} hybrid` : `${n(p)} build`;
+  };
+  const t = $("powerTable");
+  t.replaceChildren(el("tr", {}, el("th", { text: "Build" }), el("th", { class: "num", text: "Ships" }), el("th", { class: "num", text: "Made" }),
+    el("th", { class: "num", text: "Needed" }), el("th", { class: "num", text: "Made / needed" }), el("th", { class: "num", text: "Middle half" }),
+    el("th", { text: "Biggest draws" })));
+  const rows = [["All top 100", r.all], ...Object.entries(r.builds).map(([k, v]) => [name(k), v])].filter(([, v]) => v.power);
+  const med = P.ratio[1];
+  rows.forEach(([n, v]) => {
+    const p = v.power;
+    const draws = Object.entries(p.draw).slice(0, 3).map(([c, f]) => `${catOf(c).label} ${pct(f)}`).join(", ");
+    const diff = p.ratio[1] - med;
+    t.append(el("tr", {}, el("td", { text: n }), el("td", { class: "num", text: String(v.ships) }), el("td", { class: "num", text: fmt(p.make) }),
+      el("td", { class: "num", text: fmt(p.use) }),
+      el("td", { class: "num" + (v !== r.all && Math.abs(diff) >= 0.02 ? (diff > 0 ? " pos" : " neg") : ""), text: pct(p.ratio[1]) }),
+      el("td", { class: "num", text: v.ships > 1 ? `${pct(p.ratio[0])}-${pct(p.ratio[2])}` : "-" }), el("td", { class: "buildcell", text: draws })));
+  });
+  const drawRows = Object.entries(P.draw).map(([c, f]) => ({ label: catOf(c).label, color: catOf(c).color, q: [f, f, f].map((x) => x * 100) }));
+  hbars($("powerDraw"), drawRows, Math.max(...drawRows.map((d) => d.q[1])), "% of the draw");
+  $("powerDraw").querySelectorAll(".val").forEach((v) => { v.textContent = Math.round(parseFloat(v.textContent)) + "%"; });
+  $("powerDraw").querySelectorAll(".iqr").forEach((v) => v.remove());
   return true;
 }
 
@@ -407,6 +453,7 @@ Promise.all([Top100.load(), Hulls.load(false).catch(() => null)]).then(() => {
   if (trophySection(a)) show("secTrophy");
   edgeBars(a); show("secEdge");
   adjTable(a); show("secAdj");
+  if (powerSection(a)) show("secPower");
   armor(a); show("secArmor");
   benchmark(a); show("secCalib");
 });

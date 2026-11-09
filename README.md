@@ -64,8 +64,8 @@ optionally a second one (e.g. missiles + hangars = missile/hangar hybrid), or cl
   blended with ships of the same main weapon and the whole top 100;
 * scales it to your hull's size and keeps only rooms **your hull's ship level can build**, each at the best level it
   allows (the ship level comes from the hull you picked, or choose one). Rooms that unlock later are listed;
-* checks power the way top ships run it (their reactors make about half of what all their rooms could draw at once) and
-  adds reactors when it is lower;
+* checks power the way that build's top ships run it (made / needed at full power, e.g. about 51% for missile/hangar
+  hybrids and 56% for missile builds; about half overall) and adds reactors when it is lower;
 * makes it fit: rooms + armor + space for lifts and vents within the hull, leaving out the least important rooms first;
 * skips event and premium rooms (starbux, rewards, one-level rooms) unless you tick *Include event and special rooms*.
 
@@ -143,6 +143,10 @@ optimizer learned:
 * **Build explorer**: for each build, rooms of each type per 100 hull tiles and the rooms its ships prefer, with
   *Plan this build in the optimizer*.
 * **What goes with more trophies**: rank correlation of trophies with armor, rooms, lifts, vents and each room type.
+* **Power: made and needed**: for every top ship the power its reactors make and the power all its systems draw at
+  full power (rooms counted at the best level the ship's level allows, since the ladder data has no room levels), the
+  made/needed ratio for the whole top 100 and for each build (median and middle half), and where the power goes by
+  room type. The *Every ship* table lists each ship's power. The room recommender uses the chosen build's ratio.
 * Overview tiles include how much of their rooms' full power top ships make and how full their hulls are.
 
 ## Builds (Top 100 page)

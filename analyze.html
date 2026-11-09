@@ -25,7 +25,7 @@
       <a href="#secTiers">Top 10 vs the rest</a><a href="#secExplorer">Build explorer</a><a href="#secBuilds">Builds</a>
       <a href="#secHulls">Hulls</a><a href="#secGallery">Layouts</a><a href="#secRooms">Rooms per ship</a>
       <a href="#secTrophy">What goes with trophies</a><a href="#secEdge">Hull edge</a><a href="#secAdj">Neighbours</a>
-      <a href="#secArmor">Armor and lifts</a><a href="#secCalib">Optimizer benchmark</a>
+      <a href="#secPower">Power</a><a href="#secArmor">Armor and lifts</a><a href="#secCalib">Optimizer benchmark</a>
     </nav>
 
     <section class="panel" id="secTiers" hidden>
@@ -113,6 +113,20 @@
         and are not used by the optimizer (<code>TAG_ADJ</code>). Hover a cell for the counts.</p>
       <div class="tablewrap free"><table id="adjTable" class="heat"></table></div>
       <div class="scale"><span>apart</span><i class="sw" style="background:var(--neg)"></i><i class="sw" style="background:var(--mid)"></i><i class="sw" style="background:var(--pos)"></i><span>together</span></div>
+    </section>
+
+    <section class="panel" id="secPower" hidden>
+      <h2>Power: made and needed</h2>
+      <p class="muted">For every top ship: the power its reactors make, and the power all its systems (weapons, shields,
+        engines, crew rooms ...) draw when running at full power. The ladder data has no room levels, so every room is
+        counted at the best level the ship's level allows. Players power systems as needed, so ships make far less than
+        all their systems could draw. The room recommender uses each build's ratio.</p>
+      <div id="powerTiles" class="tiles"></div>
+      <h3>By build</h3>
+      <div class="tablewrap free"><table id="powerTable"></table></div>
+      <h3>Where the power goes</h3>
+      <p class="muted">Share of all top ships' full-power draw, by room type.</p>
+      <div id="powerDraw" class="hbars"></div>
     </section>
 
     <section class="panel" id="secArmor" hidden>

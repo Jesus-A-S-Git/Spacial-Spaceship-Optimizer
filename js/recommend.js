@@ -59,7 +59,12 @@ const Recommender = (() => {
     });
     const fam = (c) => (exact && exact.families[c]) || (prim && prim.families[c]) || all.families[c] || [];
     const pick = (k) => parts.reduce((a, [pr, w]) => a + w * (pr[k] || 0), 0);
-    return { cats, families: fam, armor: pick("armor"), lifts: pick("lifts"), vents: pick("vents"),
+    // power made / power all systems need, as this build's top ships run it (blended like the rooms)
+    const pw = parts.filter(([pr]) => pr.power && pr.power.ratio);
+    const pwSum = pw.reduce((a, [, w]) => a + w, 0);
+    const powerRatio = pwSum ? [0, 1, 2].map((i) => pw.reduce((a, [pr, w]) => a + (w * pr.power.ratio[i]) / pwSum, 0)) : null;
+    return { cats, families: fam, armor: pick("armor"), lifts: pick("lifts"), vents: pick("vents"), powerRatio,
+             power: exact && exact.power ? exact.power : all.power,
              ships: exact ? exact.ships : 0, ranks: exact ? exact.ranks : [], exact: !!exact };
   }
 
@@ -126,12 +131,12 @@ const Recommender = (() => {
     const reactors = items.filter((it) => it.cat === "reactor" && it.d.powerGen > 0)
       .sort((a, b) => b.d.powerGen / (b.g.w * b.g.h) - a.d.powerGen / (a.g.w * a.g.h));
     // top ships' reactors make only about half of what all their rooms could draw at once
-    const ratio = (analysis.recommend.power_ratio || [0.5, 0.5, 0.55]);
+    const ratio = prof.powerRatio || analysis.recommend.power_ratio || [0.5, 0.5, 0.55];
     if (GameRooms.hasTiers && use && make < use * ratio[0] && reactors.length) {
       const best = reactors[0];
       const add = Math.ceil((use * ratio[0] - make) / best.d.powerGen);
       best.count += add;
-      notes.push(`Added ${add} ${best.g.name} so power is in the top ships' range.`);
+      notes.push(`Added ${add} ${best.g.name} so power is in the range this build's top ships run.`);
       [use, make] = powerOf();
     }
 
@@ -171,7 +176,7 @@ const Recommender = (() => {
     const lockedUniq = [...new Map(locked.map((l) => [l.name, l])).values()].sort((a, b) => (a.minShip || 0) - (b.minShip || 0));
     return {
       build: buildName(opts.primary, opts.secondary), level, hullTiles, rooms, armor, liftTiles,
-      power: { use, make, top: ratio[1] }, notes, locked: lockedUniq, basis: prof.exact ? prof.ships : 0, ranks: prof.ranks,
+      power: { use, make, top: ratio[1], range: [ratio[0], ratio[2]], build: prof.power }, notes, locked: lockedUniq, basis: prof.exact ? prof.ships : 0, ranks: prof.ranks,
       tiles: roomTiles(),
     };
   }
