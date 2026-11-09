@@ -1,7 +1,7 @@
-name: Refresh ship list
+name: Refresh ship and room lists
 
-# Rebuilds data/ships.json from the official Pixel Starships API so the website's
-# "Find a ship hull" box has every ship. Runs weekly, and on demand from the Actions tab.
+# Rebuilds data/ships.json and data/rooms.json from the official Pixel Starships API, so the website's
+# "Find a ship hull" box and room-name autocomplete stay current. Runs weekly, and on demand from the Actions tab.
 on:
   schedule:
     - cron: "17 6 * * 1"
@@ -20,14 +20,16 @@ jobs:
           python-version: "3.12"
       - name: Build ship list
         run: python3 tools/build_ship_list.py
+      - name: Build room list
+        run: python3 tools/build_room_list.py
       - name: Commit if changed
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898273+github-actions[bot]@users.noreply.github.com"
-          git add data/ships.json
+          git add data/ships.json data/rooms.json
           if git diff --cached --quiet; then
-            echo "Ship list unchanged."
+            echo "Ship and room lists unchanged."
           else
-            git commit -m "Refresh ship list"
+            git commit -m "Refresh ship and room lists"
             git push
           fi
