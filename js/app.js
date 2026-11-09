@@ -34,6 +34,7 @@ const DEFAULTS = {
   resource_anywhere: true,
   place_bonus_rooms: true,
   walk_noncombat: true,     // crew walk through every room (as in the game), not only combat rooms
+  connect_all: true,        // after each search, add vents/lifts until every combat room is reachable
   use_top: true,            // start searches from top-100 layouts on the same hull
   learn_top: true,          // score with patterns and habits learned from the top 100
   style_v2: true,
@@ -456,6 +457,8 @@ function buildTopUi() {
   $("learnTop").onchange = (e) => { cfgState.learn_top = e.target.checked; saveSettings(); };
   $("walkNc").checked = cfgState.walk_noncombat;
   $("walkNc").onchange = (e) => { cfgState.walk_noncombat = e.target.checked; saveSettings(); };
+  $("connectAll").checked = cfgState.connect_all;
+  $("connectAll").onchange = (e) => { cfgState.connect_all = e.target.checked; saveSettings(); };
   Object.keys(STYLES).forEach((name) => {
     $("style_" + name).onclick = () => {
       Object.assign(cfgState.settings, STYLES[name]);
@@ -609,7 +612,7 @@ function buildConfig() {
     combat_range: cfgState.combat_range, place_bonus_rooms: cfgState.place_bonus_rooms,
     rooms: cfgState.rooms.map((r) => { const c = catOf(r.cat); return { name: r.name || c.label, short: r.short || "", cat: c.id, catLabel: c.label, kind: c.kind, w: r.w, h: r.h, count: r.count, armor: c.kind === "priority" || c.kind === "combat" ? (r.armor || "") : "" }; }),
     resource_anywhere: cfgState.resource_anywhere, search: cfgState.search,
-    walk_noncombat: cfgState.walk_noncombat, vent_game_links: cfgState.walk_noncombat,
+    walk_noncombat: cfgState.walk_noncombat, vent_game_links: cfgState.walk_noncombat, connect_all: cfgState.connect_all,
     ...(cfgState.learn_top && Top100.analysis ? { patterns: Top100.analysis.patterns, top50_priors: Top100.analysis.priors } : {}),
   };
 }

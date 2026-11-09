@@ -259,7 +259,7 @@ def ship_cfg(ship, patterns, weights=None, settings=None):
             for k, g in groups.items()]
     nl = len(ship.lifts)
     cfg = dict(hull=ship.hull, rooms=rows, resource_anywhere=True, place_bonus_rooms=False, patterns=patterns,
-               walk_noncombat=True, vent_game_links=True,
+               walk_noncombat=True, vent_game_links=True, connect_all=True,
                settings=settings or dict(ARMOR_COUNT=len(ship.armor), MIN_LIFTS=min(nl, 1), MAX_LIFTS=max(nl, 1),
                                          START_LIFTS=max(1, min(nl, 2)), VENT_COUNT=len(ship.vents), W_PATTERN=1.0))
     if weights:
@@ -271,8 +271,18 @@ def ship_module(ship, patterns, weights=None):
     """Build the optimizer for this ship's hull and room list; return (module, state)."""
     cfg, rooms = ship_cfg(ship, patterns, weights)
     m = web_driver.build_module(cfg, os.path.join(ROOT, "python", "ship_layout_finder.py"))
-    state = dict(pos=[(r["x"], r["y"]) for r in rooms], lifts=list(ship.lifts), vents=list(ship.vents))
+    state = dict(pos=[(r["x"], r["y"]) for r in rooms], lifts=list(ship.lifts), vents=[])
+    state["vents"] = legal_vents(m, state, ship.vents)
     return m, state
+
+
+def legal_vents(m, state, vents):
+    """The real vents the optimizer's vent rules accept (game-like vents may only touch side by side)."""
+    keep = []
+    for v in vents:
+        if m.occupancy(dict(state, vents=keep + [v])) is not None:
+            keep.append(v)
+    return keep
 
 
 def features(m, state):

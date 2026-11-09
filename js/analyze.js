@@ -153,10 +153,9 @@ function benchmark(a) {
     el("p", { text: `${n} top-100 ships (even ranks): the optimizer got the same hull, the same rooms and the same armor count as the real ` +
       `player, ${Math.round(b.seconds)} seconds of search on one core and the website's settings, and its best layout was measured ` +
       `the same way as the real ship. Medians over the ships; data from ${(b.updated || "").slice(0, 10)}.` }),
-    el("p", { text: "Top players pack their hulls with armor and connect rooms with few lifts plus Service Vents (vents link the " +
-      "rooms, vents and lifts they touch, and sit on armor between rooms: \"sandwiching\"). Reachability is measured with these " +
-      "game-like vents. The top-player style (the website's default) weights armor like top players do; the original weights " +
-      "keep every room reachable at the cost of armor." }));
+    el("p", { text: "Top players pack their hulls with armor and connect rooms with few lifts plus Service Vents (vents move crew " +
+      "sideways and connect to a room only at its bottom row; side-by-side vents form a passage). Reachability is measured with " +
+      "these rules, and the optimizer adds vents or lifts after each search until every combat room is reachable where possible." }));
   const t = $("benchTable");
   t.replaceChildren(el("tr", {}, el("th", { text: "Measure" }), el("th", { class: "num", text: "Real top ships" }),
     ...b.configs.map((c) => el("th", { class: "num", text: BENCH_NAMES[c.name] || c.name }))));

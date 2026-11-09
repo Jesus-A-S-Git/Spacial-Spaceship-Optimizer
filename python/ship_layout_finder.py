@@ -241,17 +241,19 @@ W_PATTERN = 0.0                    # strength of the learned patterns
 #     bedrooms, storage etc. become walkable floor too (needed to score real top ships as connected).
 WALK_NONCOMBAT = False
 
-# 13) Game-like Service Vents:
-#       * a vent links what touches it on any side: rooms (at any height of the room, e.g. the upper row of a
-#         2-high room), other vents (vent passages and shafts) and lifts. Measured on the top-100 ships: with
-#         sideways-only links 43% of their vents would join nothing useful, with all four sides 11%.
-#       * crew can only use a vent that has something solid under it (armor, another vent, a room, a lift or
-#         the hull bottom); armor goes under a vent first ("sandwiching": a vent on armor between two rooms,
-#         the armor protects both rooms while crew pass through). A vent over an empty tile is unusable (W_VENT).
-#       * vents may touch each other
-#     False = this optimizer's original vents (link the rooms left and right at their floor row only; vents
-#     may not touch).
+# 13) Game-like Service Vents (Pixel Starships wiki, "Service Vent"):
+#       * horizontal movement only: vents carry crew sideways across the ship, as lifts carry them up and down
+#       * a vent connects to a room only where it touches that room's BOTTOM row (its floor)
+#       * vents may sit side by side to form a longer horizontal passage; a passage that ends beside a lift
+#         connects to it
+#       * a passage counts as useful only if it joins two different rooms/lifts; vents that do not help
+#         crew reach rooms are removed after each search (prune_vents)
+#     False = this optimizer's original vents (single vents between two combat rooms; vents may not touch).
 VENT_GAME_LINKS = False
+
+# 14) CONNECT_ALL: after each search, add vents (where allowed) and lifts until every combat room can be
+#     reached from every other one, if that is possible; vents are never removed if that would cut a room off.
+CONNECT_ALL = False
 
 # 12) STYLE. "original" = the weights above. "top" = armor-first weights that bring layouts close to the
 #     top-100 ladder ships (tools/benchmark_top.py: same hull and rooms as real top ships, ~95% of their armor
@@ -593,8 +595,8 @@ def occupancy(state):
             return None
         for dx in (-1, 0, 1):
             for dy in (-1, 0, 1):
-                if (dx or dy) and (x + dx, y + dy) in vents and not VENT_GAME_LINKS:
-                    return None          # vents may not touch each other
+                if (dx or dy) and (x + dx, y + dy) in vents and not (VENT_GAME_LINKS and dy == 0):
+                    return None          # vents may not touch (game-like: only side by side, in a passage)
         vents.add(t)
     return tiles, lifts, vents
 
@@ -610,16 +612,11 @@ def vent_links(pos, vents, tiles):
     for vx, vy in vents:
         links = []
         if VENT_GAME_LINKS:
-            # every room touching the vent (any side, any height); crew then walk to that room's floor
-            seen = set()
-            for dx, dy in NEIGH:
-                r = tiles.get((vx + dx, vy + dy))
-                if r is None or r in seen or not (r < NC or WALK_NONCOMBAT):
-                    continue
-                seen.add(r)
-                fy = pos[r][1] + ROOMS[r][3] - 1
-                fx = vx + dx if dx else min(max(vx, pos[r][0]), pos[r][0] + ROOMS[r][2] - 1)
-                links.append(((fx, fy), VENT_LINK_COST + abs(fy - vy), r))
+            # rooms left and right whose bottom row the vent touches (any walkable room)
+            for dx in (-1, 1):
+                r = tiles.get((vx + dx, vy))
+                if r is not None and (r < NC or WALK_NONCOMBAT) and pos[r][1] + ROOMS[r][3] - 1 == vy:
+                    links.append(((vx + dx, vy), VENT_LINK_COST, r))
             res.append(((vx, vy), links))
             continue
         for dx in (-1, 1):
@@ -632,12 +629,34 @@ def vent_links(pos, vents, tiles):
     return res
 
 
+def vent_runs(vents):
+    """Vents grouped into horizontal passages (runs of side-by-side vents), each sorted left to right."""
+    vs = set(vents)
+    runs = []
+    for v in sorted(vs, key=lambda t: (t[1], t[0])):
+        if (v[0] - 1, v[1]) in vs:
+            continue
+        run = [v]
+        while (run[-1][0] + 1, v[1]) in vs:
+            run.append((run[-1][0] + 1, v[1]))
+        runs.append(run)
+    return runs
+
+
 def vent_penalty(vlinks, lifts=()):
-    if VENT_GAME_LINKS:              # a vent is useful if it joins two things: rooms, vents or lifts
-        vset = {vt for vt, _ in vlinks}
-        return sum(1 for (x, y), links in vlinks
-                   if len({r for _, _, r in links})
-                   + sum((x + dx, y + dy) in vset or (x + dx, y + dy) in lifts for dx, dy in NEIGH) < 2)
+    if VENT_GAME_LINKS:              # every vent of a passage that does not join two different rooms/lifts
+        links = dict(vlinks)
+        bad = 0
+        for run in vent_runs(links):
+            ends = set()
+            for v in run:
+                ends.update(("r", r) for _, _, r in links[v])
+            x0, y = run[0]
+            x1 = run[-1][0]
+            ends.update(("l", t) for t in ((x0 - 1, y), (x1 + 1, y)) if t in lifts)
+            if len(ends) < 2:
+                bad += len(run)
+        return bad
     return sum(1 for _, links in vlinks if len({r for _, _, r in links}) < 2)
 
 
@@ -687,10 +706,10 @@ def build_graph(walk, lifts, extra_nodes, vlinks):
         for ft, cost, _ in links:
             adj[vt].append((ft, cost))
             adj[ft].append((vt, cost))
-    if VENT_GAME_LINKS:                                    # vent passages / shafts, and vents beside lifts
+    if VENT_GAME_LINKS:                                    # horizontal passages, and passages beside lifts
         vset = {vt for vt, _ in vlinks}
         for (x, y) in vset:
-            for n in ((x + 1, y), (x, y + 1), (x - 1, y), (x, y - 1)):
+            for n in ((x + 1, y), (x - 1, y)):
                 if (n in vset and n > (x, y)) or n in lifts:
                     adj[(x, y)].append((n, VENT_LINK_COST))
                     adj[n].append(((x, y), VENT_LINK_COST))
@@ -1249,23 +1268,27 @@ def vent_gap_spots(s):
     blocked.update(tuple(v) for v in s["vents"])
     spots = []
     if VENT_GAME_LINKS:
-        # any free tile that touches two different things crew can use: rooms, vents or lifts
+        # free tiles in a horizontal gap: left and right are each a room's BOTTOM row, a lift or a vent
+        # (extending a passage), and at least one side is a room floor or a lift
         vset = {tuple(v) for v in s["vents"]}
         lset = {(x, y) for x, y0, y1 in s["lifts"] for y in range(y0, y1 + 1)}
+
+        def side(n):
+            r = owner.get(n)
+            if r is not None and (r < NC or WALK_NONCOMBAT) and s["pos"][r][1] + ROOMS[r][3] - 1 == n[1]:
+                return ("r", r)
+            if n in lset:
+                return ("l", n)
+            if n in vset:
+                return ("v", n)
+            return None
         for y in range(H):
-            for x in range(W):
+            for x in range(1, W - 1):
                 t = (x, y)
                 if t in blocked or not free_tile(x, y):
                     continue
-                things = set()
-                for dx, dy in NEIGH:
-                    n = (x + dx, y + dy)
-                    r = owner.get(n)
-                    if r is not None and (r < NC or WALK_NONCOMBAT):
-                        things.add(("r", r))
-                    elif n in vset or n in lset:
-                        things.add(n)
-                if len(things) >= 2:
+                a, b = side((x - 1, y)), side((x + 1, y))
+                if a and b and a != b and (a[0] != "v" or b[0] != "v"):
                     spots.append(t)
         return spots
     for y in range(H):
@@ -1646,17 +1669,6 @@ def finalize(state):
         # prefer tiles that at least touch a combat room, and avoid non-combat rooms where possible
         free.sort(key=lambda t: (t not in near, t in halo))
         armor += free[: ARMOR_COUNT - len(armor)]
-    if VENT_GAME_LINKS and armor:
-        # a vent needs something solid under it: put armor under every vent that sits over an empty tile
-        # ("sandwiching"), taking it from the least useful armor tiles (the end of the greedy pick order)
-        need = [(x, y + 1) for (x, y) in vents if ok_tile(x, y + 1) and g[y + 1][x] == "." and (x, y + 1) not in armor]
-        need = list(dict.fromkeys(need))
-        keep = set(need)
-        for t in need:
-            for i in range(len(armor) - 1, -1, -1):
-                if armor[i] not in keep:
-                    armor[i] = t
-                    break
     for x, y in armor:
         g[y][x] = "A"
     # every lift tile must touch a combat room or an armor tile (not counting other lift tiles)
@@ -1837,9 +1849,6 @@ def finalize(state):
     floating = sum(1 for t in armor if t not in near_c)
     spread = priority_spread(pos)
     vpen = vent_penalty(vl, lifts)
-    if VENT_GAME_LINKS:              # unusable: nothing solid under the vent (empty tile, no armor there)
-        solid = set(tiles) | set(lifts) | set(vents) | set(armor)
-        vpen += sum(1 for (x, y) in vents if ok_tile(x, y + 1) and (x, y + 1) not in solid)
     unarmored_rooms = [r for r in range(NC) if touch[r] == 0]
     unarmored_priority = sum(1 for r in unarmored_rooms if r in PRIORITY_SET)
     center_dist = center_distance(pos)
@@ -2418,6 +2427,80 @@ def ppo_grads(p, b, clip=0.2, beta=0.01, cv=0.5, adv=None):
     return loss, G, st
 
 
+def prune_vents(st, res):
+    """Remove every vent the layout does not need: one at a time, drop a vent when the layout scores at
+    least as well without it (its tile then goes to armor). With CONNECT_ALL a vent that keeps a room
+    reachable always stays. Repeats until no vent can go."""
+    cur, best = st, res
+    changed = True
+    while changed and cur["vents"]:
+        changed = False
+        for v in list(cur["vents"]):
+            cand = dict(pos=cur["pos"], lifts=cur["lifts"], vents=[x for x in cur["vents"] if x != v])
+            r = finalize(cand)
+            if r and r[0] >= best[0] - 1e-9 and not (CONNECT_ALL and r[2]["unreach"] > best[2]["unreach"]):
+                cur, best, changed = cand, r, True
+                break
+    return cur, best
+
+
+def cut_off(state):
+    """Combat rooms outside the biggest connected group (0 = every combat room reaches every other)."""
+    occ = occupancy(state)
+    if occ is None:
+        return None
+    tiles, lifts, vents = occ
+    walk = walk_set(state["pos"], lifts, vents, set())
+    adj, reps, _ = make_graph(state["pos"], lifts, vents, tiles, walk)
+    comp, sizes = {}, []
+    for rp in reps:
+        if rp in comp:
+            continue
+        k = len(sizes)
+        sizes.append(0)
+        comp[rp] = k
+        stack = [rp]
+        while stack:
+            u = stack.pop()
+            for v, _ in adj.get(u, ()):
+                if v not in comp:
+                    comp[v] = k
+                    stack.append(v)
+    for rp in reps:
+        sizes[comp[rp]] += 1
+    return len(reps) - max(sizes) if sizes else 0
+
+
+def repair_connections(st, res, rng, rounds=12):
+    """CONNECT_ALL: while combat rooms are cut off, add the vent or lift that reconnects the most."""
+    cur, cut = st, cut_off(st)
+    for _ in range(rounds):
+        if not cut:
+            break
+        cands = []
+        if len(cur["vents"]) < VENT_COUNT:
+            cands += [dict(pos=cur["pos"], lifts=cur["lifts"], vents=list(cur["vents"]) + [sp]) for sp in vent_gap_spots(cur)]
+        if len(cur["lifts"]) < MAX_LIFTS:
+            seen = set()
+            for _ in range(60):
+                lf = fit_lift(cur, rng)
+                if lf and lf not in seen:
+                    seen.add(lf)
+                    cands.append(dict(pos=cur["pos"], lifts=list(cur["lifts"]) + [lf], vents=cur["vents"]))
+        best_c, best_cut = None, cut
+        for c in cands:
+            k = cut_off(c)
+            if k is not None and k < best_cut:
+                best_c, best_cut = c, k
+        if best_c is None:
+            break
+        cur, cut = best_c, best_cut
+    if cur is st:
+        return st, res
+    r = finalize(cur)
+    return (cur, r) if r else (st, res)
+
+
 def run_restart(args):
     seed, iters, steps, start, t0, weights = args[:6]
     pol = args[6] if len(args) > 6 else None            # (policy params, explore share) or None
@@ -2430,6 +2513,10 @@ def run_restart(args):
         tick(iters + steps)
         return seed, float("-inf"), None, [0] * NOPS, [0] * NOPS, None
     st, res, a2, s2 = polish(st, rng, steps, weights, policy=policy)
+    if res and CONNECT_ALL:
+        st, res = repair_connections(st, res, rng)
+    if res and st["vents"]:
+        st, res = prune_vents(st, res)
     att = [x + y for x, y in zip(a1, a2)]
     succ = [x + y for x, y in zip(s1, s2)]
     return seed, (res[0] if res else float("-inf")), res, att, succ, (policy.export() if policy else None)
