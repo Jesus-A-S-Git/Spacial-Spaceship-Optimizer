@@ -90,6 +90,12 @@ def main():
             v = num(pick(e, *names))
             if v is not None and (v or field == "minShip"):
                 rg[field] = v if field not in rg else agg(rg[field], v)
+        # how the room is obtained (price, requirement, flags): tells shop rooms from event / reward rooms
+        for field, names in (("price", ("pricestring",)), ("req", ("requirementstring",)), ("flags", ("flags",)),
+                             ("rank", ("itemrank",))):
+            v = pick(e, *names)
+            if v not in (None, "", "0"):
+                rg[field] = str(v)
     rooms = sorted(groups.values(), key=lambda r: (r["name"].lower(), r["w"] * r["h"]))
     if not rooms:
         sys.exit("No room designs with a size were found; data/rooms.json was not changed.")
