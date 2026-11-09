@@ -13,7 +13,7 @@ permissions:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -34,8 +34,8 @@ jobs:
         run: |
           if [ -f build/top/layouts.json ]; then
             python3 tools/analyze_top.py --raw build/top/layouts.json
-            # how close the optimizer gets to the real ships (original vs top-player style), ~20 minutes
-            python3 tools/benchmark_top.py --ships 8 --seconds 40 --into data/top_analysis.json
+            # how close the optimizer gets to the real ships, 16 ships x 4 setups, ~45 minutes
+            python3 tools/benchmark_top.py --ships 16 --seconds 40 --configs original,top,top+similar,top+templates --into data/top_analysis.json
           fi
       - name: Commit if changed
         run: |

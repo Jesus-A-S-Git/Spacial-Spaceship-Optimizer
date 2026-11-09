@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.join(ROOT, "python"))
 import analyze_top as A  # noqa: E402
 import web_driver  # noqa: E402
 
-SRC = os.path.join(ROOT, "python", "ship_layout_finder.py")
+SRC = os.environ.get("BENCH_SRC") or os.path.join(ROOT, "python", "ship_layout_finder.py")
 # the website's defaults (js/app.js DEFAULTS.settings), armor count taken from the real ship
 SITE = dict(MIN_LIFTS=2, MAX_LIFTS=6, START_LIFTS=2, VENT_COUNT=8, VENT_LINK_COST=1, LIFT_COST=2, MAX_EMPTY_RUN=3,
             W_PATTERN=3, W_SHELL=3, W_NC_CLUSTER=15, W_LIFT_DENSITY=20)
@@ -54,7 +54,7 @@ def shape(m, state):
                 armor_pri=statistics.mean(pri) if pri else 0.0, armor_float=info["floating"])
 
 
-def run_bench(lays, data, an, ships_by_id, seconds, overrides, templates, log=print):
+def run_bench(lays, data, an, ships_by_id, seconds, overrides, templates, log=print, similar=False):
     rows = []
     for l in lays:
         ship = A.Ship(l, ships_by_id[l["ship_id"]]["hull"])
@@ -77,6 +77,11 @@ def run_bench(lays, data, an, ships_by_id, seconds, overrides, templates, log=pr
             run_cfg["templates"] = [{"rooms": [[r["x"], r["y"], r["w"], r["h"], r["cat"]] for r in A.Ship(o, ship.hull).rooms],
                                      "lifts": [list(s) for s in A.Ship(o, ship.hull).lifts],
                                      "vents": [list(v) for v in A.Ship(o, ship.hull).vents]} for o in others]
+        if similar:                     # borrowed from OTHER hulls with a similar shape (never this hull)
+            sim = A.similar_templates(ship.hull, data["layouts"], ships_by_id, exclude_ship_ids={l["ship_id"]},
+                                      max_n=6, min_overlap=float(os.environ.get("BENCH_MIN_OVERLAP", "0.6")))
+            run_cfg["templates"] = [t for _, _, t in sim]
+            log(f"  #{l['rank']}: {len(sim)} borrowed layouts" + (f", best overlap {sim[0][0]:.2f} ({sim[0][1]})" if sim else ""))
         out = []
         web_driver.run(json.dumps(run_cfg), SRC, lambda s: out.append(json.loads(s)))
         best = next((o for o in reversed(out) if o.get("layouts")), None)
@@ -104,10 +109,10 @@ def summary(rows):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ships", type=int, default=8)
+    ap.add_argument("--ships", type=int, default=16)
     ap.add_argument("--seconds", type=float, default=40, help="search time per ship (one core)")
-    ap.add_argument("--configs", default="original,top,top+templates",
-                    help="comma list of: original, top, original+templates, top+templates")
+    ap.add_argument("--configs", default="original,top,top+similar,top+templates",
+                    help="comma list of: original, top, top+similar (borrowed from similar hulls), top+templates")
     ap.add_argument("--set", action="append", default=[], help="extra setting override for every config, e.g. --set W_DISC=50")
     ap.add_argument("--into", default=None, help="add the results to this top_analysis.json as 'benchmark'")
     a = ap.parse_args()
@@ -122,10 +127,11 @@ def main():
     for name in [c.strip() for c in a.configs.split(",") if c.strip()]:
         style, _, tpl = name.partition("+")
         print(f"{name}: {len(lays)} ships x {a.seconds:.0f}s", flush=True)
-        rows = run_bench(lays, data, an, ships_by_id, a.seconds, dict(styles[style], **extra), tpl == "templates")
+        rows = run_bench(lays, data, an, ships_by_id, a.seconds, dict(styles[style], **extra), tpl == "templates",
+                         similar=tpl == "similar")
         if rows:
             sm = summary(rows)
-            sm.update(name=name, style=style, templates=tpl == "templates")
+            sm.update(name=name, style=style, templates=tpl in ("templates", "similar"))
             results.append(sm)
             print(f"  -> armor {sm['optimizer']['armor_sum']:.0f} vs real {sm['real']['armor_sum']:.0f}, "
                   f"at least real on {sm['armor_at_least_real']}/{sm['ships']} | unreachable {sm['optimizer']['unreach']:.0f} "

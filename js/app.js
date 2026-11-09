@@ -417,6 +417,16 @@ function hullShipIds() {
   const rows = cfgState.hull.split("\n").map((r) => r.trim()).filter(Boolean);
   return Hulls.count ? Hulls.byRows(rows).map((s) => s.id).filter((id) => id != null) : [];
 }
+// starting layouts for this hull: top-100 layouts on the same hull, otherwise borrowed from similar hulls
+let simCache = { key: null, list: [] };
+function topTemplates() {
+  const exact = Top100.templates(hullShipIds(), 6);
+  if (exact.length) return { list: exact, borrowed: false };
+  const rows = cfgState.hull.split("\n").map((r) => r.trim()).filter(Boolean);
+  const key = rows.join("/");
+  if (simCache.key !== key) simCache = { key, list: Top100.layouts.length && Hulls.count ? Top100.similar(rows, 6, 0.6) : [] };
+  return { list: simCache.list, borrowed: true };
+}
 function updateTopNote() {
   const box = $("topNote");
   if (!box) return;
@@ -425,8 +435,15 @@ function updateTopNote() {
   const lays = ids.flatMap((id) => Top100.forShip(id));
   if (!lays.length) {
     const ship = ids.length ? Hulls.byId(ids[0]) : null;
-    box.textContent = (ship ? `${ship.name}: ` : "") + "no top-100 player uses this hull, so the search starts from scratch. " +
-      "Pick a popular hull on the Top 100 page to start from real layouts.";
+    const sim = topTemplates().list;
+    if (sim.length) {
+      const names = [...new Set(sim.map((t) => t.ship))].slice(0, 2).join(", ");
+      box.textContent = (ship ? `${ship.name}: ` : "") + `no top-100 player uses this hull. The search borrows ${sim.length} top layouts ` +
+        `from similar hulls (${names}; ${Math.round(sim[0].overlap * 100)}% shape match), with rooms that do not fit placed in free space.`;
+    } else {
+      box.textContent = (ship ? `${ship.name}: ` : "") + "no top-100 player uses this hull or a similar one, so the search starts from scratch. " +
+        "Pick a popular hull on the Top 100 page to start from real layouts.";
+    }
     return;
   }
   const best = Math.min(...lays.map((l) => l.rank));
@@ -632,7 +649,7 @@ function start() {
     timeLimit: Math.max(0, +sc.time_limit || 0), restarts: Math.max(0, Math.round(+sc.restarts || 0)),
     rounds: !(+sc.restarts) && !(+sc.stagnation),            // rounds share results between cores
     firstSeeds: resume ? loadSavedBest() : [],
-    templates: cfgState.use_top ? Top100.templates(hullShipIds(), 6) : [],
+    templates: cfgState.use_top ? topTemplates().list : [],
   };
   $("startBtn").disabled = true;
   $("stopBtn").disabled = false;

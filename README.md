@@ -33,7 +33,7 @@ ship-optimizer-site/
 │   ├── build_room_list.py       writes data/rooms.json
 │   ├── pixyship_fetch_layouts.py   fetches the top-100 ladder layouts from PixyShip
 │   ├── analyze_top.py           analyses them (patterns, priors)
-│   └── benchmark_top.py         measures how close the optimizer gets to real top ships
+│   └── benchmark_top.py         measures how close the optimizer gets to real top ships (16 ships, 4 setups)
 ├── .github/workflows/refresh-ships.yml   rebuilds all data weekly (ships, rooms, top 100)
 ├── .nojekyll                    tells GitHub Pages to serve files as-is
 └── README.md
@@ -75,7 +75,9 @@ optimizer learned:
 
 * **Start from top layouts** (*Search*): if top-100 players fly your hull, the search starts from their
   layouts, with your rooms put where they placed rooms of the same type and size. Open a hull from the
-  Top 100 page to get one of these.
+  Top 100 page to get one of these. If nobody in the top 100 flies your hull, layouts are **borrowed from
+  top hulls with a similar shape** (at least 60% overlap after lining the hulls up; many top hulls are the
+  same shape under different names), shifted onto your hull; rooms that do not fit go into free space.
 * **Learned patterns** (*Search > Score with patterns learned from the top 100*): which room types top ships
   put side by side and on the hull edge (optimizer section 10, `TAG_ADJ` / `TAG_EDGE` / `W_PATTERN`), plus
   the `--top50` habits (edge use per kind, grouped non-combat rooms, lift spacing).

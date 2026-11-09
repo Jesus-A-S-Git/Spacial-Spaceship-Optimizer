@@ -132,6 +132,64 @@ class Ship:
         return occ
 
 
+# ------------------------------------------------------------------ similar hulls
+def hull_tiles(rows):
+    return {(x, y) for y, r in enumerate(rows) for x, c in enumerate(r) if c != "."}
+
+
+def best_alignment(target_rows, other_rows):
+    """(overlap, dx, dy): how well `other` lines up with `target` (intersection over union of the hull
+    tiles, 0..1) at its best shift. Tries lining up corners and centres, each nudged by up to 2 tiles."""
+    A, B = hull_tiles(target_rows), hull_tiles(other_rows)
+    if not A or not B:
+        return 0.0, 0, 0
+    ax0, ax1 = min(x for x, _ in A), max(x for x, _ in A)
+    ay0, ay1 = min(y for _, y in A), max(y for _, y in A)
+    bx0, bx1 = min(x for x, _ in B), max(x for x, _ in B)
+    by0, by1 = min(y for _, y in B), max(y for _, y in B)
+    bases = {(ax0 - bx0, ay0 - by0), (ax1 - bx1, ay1 - by1), (ax0 - bx0, ay1 - by1), (ax1 - bx1, ay0 - by0),
+             (round((ax0 + ax1 - bx0 - bx1) / 2), round((ay0 + ay1 - by0 - by1) / 2))}
+    best = (0.0, 0, 0)
+    tried = set()
+    for bdx, bdy in bases:
+        for jx in range(-2, 3):
+            for jy in range(-2, 3):
+                dx, dy = bdx + jx, bdy + jy
+                if (dx, dy) in tried:
+                    continue
+                tried.add((dx, dy))
+                inter = sum(1 for x, y in B if (x + dx, y + dy) in A)
+                iou = inter / (len(A) + len(B) - inter)
+                if iou > best[0]:
+                    best = (iou, dx, dy)
+    return best
+
+
+def similar_templates(target_rows, lays, ships_by_id, exclude_ship_ids=(), max_n=6, min_overlap=0.7):
+    """Top layouts from OTHER hulls whose shape is close to the target hull, shifted onto it. Used when no
+    top-100 player flies the target hull. Returns [(overlap, ship_name, template)]."""
+    by_hull = defaultdict(list)
+    for l in lays:
+        if l["ship_id"] in ships_by_id and l["ship_id"] not in exclude_ship_ids:
+            by_hull[l["ship_id"]].append(l)
+    scored = []
+    for sid, ls in by_hull.items():
+        ov, dx, dy = best_alignment(target_rows, ships_by_id[sid]["hull"])
+        if ov >= min_overlap:
+            scored.append((ov, sid, dx, dy))
+    out = []
+    for ov, sid, dx, dy in sorted(scored, reverse=True):
+        for l in sorted(by_hull[sid], key=lambda l: l["rank"]):
+            sh = Ship(l, ships_by_id[sid]["hull"])
+            out.append((ov, l["ship_name"], {
+                "rooms": [[r["x"] + dx, r["y"] + dy, r["w"], r["h"], r["cat"]] for r in sh.rooms],
+                "lifts": [[x + dx, y0 + dy, y1 + dy] for x, y0, y1 in sh.lifts],
+                "vents": [[x + dx, y + dy] for x, y in sh.vents]}))
+            if len(out) >= max_n:
+                return out
+    return out
+
+
 # ------------------------------------------------------------------ statistics
 def analyse(ships):
     hulls = defaultdict(lambda: {"count": 0, "best_rank": 999, "ranks": []})
