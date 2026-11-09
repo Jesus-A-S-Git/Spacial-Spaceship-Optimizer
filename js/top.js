@@ -35,14 +35,15 @@ const Top100 = (() => {
   }
   // one top layout -> {rooms: [[x, y, w, h, cat]], lifts, armor, rank, player}
   function parse(l) {
-    const rooms = [], lifts = [], armor = [];
+    const rooms = [], lifts = [], armor = [], vents = [];
     for (const [x, y, w, h, type, short, name] of l.rooms) {
       const c = GameRooms.catOf(type, name);
       if (c === "armor") armor.push([x, y]);
       else if (c === "lift") lifts.push([x, y]);
-      else if (c !== "corridor") rooms.push([x, y, w, h, c, short, name, type]);
+      else if (c === "corridor") vents.push([x, y]);          // PixyShip "Corridor" = Service Vent
+      else rooms.push([x, y, w, h, c, short, name, type]);
     }
-    return { rooms, lifts: liftSegments(lifts), armor, rank: l.rank, player: l.name, ship: l.ship_name, shipId: l.ship_id };
+    return { rooms, lifts: liftSegments(lifts), armor, vents, rank: l.rank, player: l.name, ship: l.ship_name, shipId: l.ship_id };
   }
   function forShip(id) { return (layouts || []).filter((l) => l.ship_id === id).sort((a, b) => a.rank - b.rank); }
   // templates for the optimizer: the best-ranked top layouts on this hull
@@ -51,7 +52,7 @@ const Top100 = (() => {
     shipIds.forEach((id) => forShip(id).forEach((l) => out.push(l)));
     return out.sort((a, b) => a.rank - b.rank).slice(0, max || 6).map((l) => {
       const p = parse(l);
-      return { rank: p.rank, rooms: p.rooms.map((r) => r.slice(0, 5)), lifts: p.lifts };
+      return { rank: p.rank, rooms: p.rooms.map((r) => r.slice(0, 5)), lifts: p.lifts, vents: p.vents };
     });
   }
   return {

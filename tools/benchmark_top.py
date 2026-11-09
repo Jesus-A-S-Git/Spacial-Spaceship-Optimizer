@@ -45,7 +45,7 @@ def shape(m, state):
             if not any(tiles.get(t, -1) >= m.NC and tiles[t] != r for t in ring):
                 nc_alone += 1
     pri = [info["touch"].get(r, 0) for r in m.PRIORITY_IDX]
-    return dict(score=score, armor_sum=info["arm_sum"], empty=info["empty_unused"], corridor=info["corridor"], lifts=len({x for x, _, _ in state["lifts"]}), unreach=info["unreach"],
+    return dict(score=score, vents=len(state["vents"]), armor_sum=info["arm_sum"], empty=info["empty_unused"], corridor=info["corridor"], lifts=len({x for x, _, _ in state["lifts"]}), unreach=info["unreach"],
                 travel=info["avg"], pattern=info.get("pattern", 0.0),
                 edge_pri=edge["priority"][0] / max(1, edge["priority"][1]),
                 edge_com=edge["combat"][0] / max(1, edge["combat"][1]),
@@ -58,11 +58,11 @@ def run_bench(lays, data, an, ships_by_id, seconds, overrides, templates, log=pr
     rows = []
     for l in lays:
         ship = A.Ship(l, ships_by_id[l["ship_id"]]["hull"])
-        settings = dict(SITE, ARMOR_COUNT=len(ship.armor))
+        settings = dict(SITE, ARMOR_COUNT=len(ship.armor), VENT_COUNT=len(ship.vents))   # same armor and vents as the real ship
         cfg, rooms = A.ship_cfg(ship, an["patterns"], settings=settings)
         cfg["top50_priors"] = an.get("priors")
         m = web_driver.build_module(cfg, SRC)                       # judge: website defaults, original weights
-        real = shape(m, dict(pos=[(r["x"], r["y"]) for r in rooms], lifts=list(ship.lifts), vents=[]))
+        real = shape(m, dict(pos=[(r["x"], r["y"]) for r in rooms], lifts=list(ship.lifts), vents=list(ship.vents)))
         if real is None:
             log(f"#{l['rank']}: real layout not legal in the model, skipped")
             continue
@@ -71,7 +71,8 @@ def run_bench(lays, data, an, ships_by_id, seconds, overrides, templates, log=pr
         if templates:
             others = [o for o in data["layouts"] if o["ship_id"] == l["ship_id"] and o["rank"] != l["rank"]][:6]
             run_cfg["templates"] = [{"rooms": [[r["x"], r["y"], r["w"], r["h"], r["cat"]] for r in A.Ship(o, ship.hull).rooms],
-                                     "lifts": [list(s) for s in A.Ship(o, ship.hull).lifts]} for o in others]
+                                     "lifts": [list(s) for s in A.Ship(o, ship.hull).lifts],
+                                     "vents": [list(v) for v in A.Ship(o, ship.hull).vents]} for o in others]
         out = []
         web_driver.run(json.dumps(run_cfg), SRC, lambda s: out.append(json.loads(s)))
         best = next((o for o in reversed(out) if o.get("layouts")), None)
@@ -88,7 +89,7 @@ def run_bench(lays, data, an, ships_by_id, seconds, overrides, templates, log=pr
     return rows
 
 
-KEYS = ["armor_sum", "armor_pri", "armor_float", "lifts", "unreach", "travel", "nc_grouped", "edge_nc", "edge_com", "edge_pri", "empty"]
+KEYS = ["vents", "armor_sum", "armor_pri", "armor_float", "lifts", "unreach", "travel", "nc_grouped", "edge_nc", "edge_com", "edge_pri", "empty"]
 
 
 def summary(rows):
@@ -123,7 +124,9 @@ def main():
             sm.update(name=name, style=style, templates=tpl == "templates")
             results.append(sm)
             print(f"  -> armor {sm['optimizer']['armor_sum']:.0f} vs real {sm['real']['armor_sum']:.0f}, "
-                  f"at least real on {sm['armor_at_least_real']}/{sm['ships']}", flush=True)
+                  f"at least real on {sm['armor_at_least_real']}/{sm['ships']} | unreachable {sm['optimizer']['unreach']:.0f} "
+                  f"vs real {sm['real']['unreach']:.0f} | priority armor {sm['optimizer']['armor_pri']:.2f} vs {sm['real']['armor_pri']:.2f}"
+                  f" | wasted armor {sm['optimizer']['armor_float']:.0f} | lifts {sm['optimizer']['lifts']:.1f} | vents {sm['optimizer']['vents']:.0f}", flush=True)
     if a.into and results:
         with open(a.into, encoding="utf-8") as f:
             doc = json.load(f)
