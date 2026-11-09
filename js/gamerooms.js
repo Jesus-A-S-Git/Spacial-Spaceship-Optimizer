@@ -9,7 +9,7 @@ const GameRooms = (() => {
     Carrier: "hangar", AntiCraft: "antiair",
     Engine: "antimissile", AntiTeleport: "antitele", Trap: "antitele", Teleport: "boarding",
     Android: "crewsupport", Medical: "crewsupport", Reviver: "crewsupport", Stealth: "cloak", Radar: "cloak",
-    Command: "command", Bridge: "command", Booster: "command",
+    Command: "command", Bridge: "command", Booster: "booster",
     Bedroom: "crew", Training: "noncombat", Council: "noncombat", Research: "noncombat",
     Gas: "resource", Mineral: "resource", Storage: "resource", Supply: "resource", Printer: "resource", Recycling: "resource",
   };

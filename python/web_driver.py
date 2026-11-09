@@ -24,7 +24,16 @@ INT_KEYS = {"ARMOR_COUNT", "MAX_EMPTY_RUN", "LIFT_COST", "VENT_COUNT", "VENT_LIN
 FLOAT_KEYS = {"PRIORITY_WEIGHT", "W_ARMOR", "W_UNARMORED", "W_PRIORITY_UNARMORED", "W_FLOAT",
               "W_TRAVEL", "W_CORNER", "W_DISC", "CORNER_UNREACHABLE", "W_LIFT", "W_LTOUCH",
               "W_LIFT_BALANCE", "W_LIFT_COUNT", "W_GAP", "W_EMPTY", "W_RUN", "W_ISO", "W_SPREAD",
-              "SPREAD_CAP", "W_VENT", "W_ARMOR_UNDER", "PRIORITY_UNDER_MULT", "W_ARMOR_OVER", "W_SIDE", "W_CENTER", "W_PATTERN", "W_SHELL", "W_NC_CLUSTER", "W_LIFT_DENSITY"}
+              "SPREAD_CAP", "W_VENT", "W_ARMOR_UNDER", "PRIORITY_UNDER_MULT", "W_ARMOR_OVER", "W_SIDE", "W_CENTER", "W_PATTERN", "W_SHELL", "W_NC_CLUSTER", "W_LIFT_DENSITY", "W_BOOST"}
+# What each booster boosts (measured on the top-100 ships); unknown boosters boost any combat room.
+COMBAT_TAGS = ["reactor", "shield", "priority", "laser", "antiair", "missile", "hangar", "antimissile", "antitele",
+               "boarding", "crewsupport", "cloak", "shieldsupport", "command", "utility", "combat"]
+BOOST_TARGETS = {
+    "gunnery core": ["laser", "combat"],           # lasers and cannons
+    "missile matrix": ["missile"],
+    "flight controller": ["hangar"],
+    "auxiliary booster": COMBAT_TAGS,
+}
 # room types the optimizer pulls toward the middle of the combat block (CENTER_GROUPS)
 CENTER_CATS = {"antiair"}
 
@@ -89,6 +98,15 @@ def build_injection(cfg):
     lines.append(f"RESOURCE_ANYWHERE = {bool(cfg.get('resource_anywhere', True))}")
     if meta is not None:
         lines.append(f"ROOM_TAGS = {[md['cat'] for md in meta]!r}")
+        boosts = []
+        for md in meta:
+            if md["cat"] != "booster":
+                boosts.append([])
+                continue
+            key = md["name"].lower()
+            boosts.append(next((t for n, t in BOOST_TARGETS.items() if n in key), COMBAT_TAGS))
+        if any(boosts):
+            lines.append(f"ROOM_BOOSTS = {boosts!r}")
     priors = cfg.get("top50_priors")
     if priors and isinstance(priors, dict) and "edge_pref" in priors:
         # the optimizer reads its top-50 numbers from a file at import time: hand them over as one
@@ -225,7 +243,7 @@ def layout_json(m, res):
         priority_spread=info["spread"], vents=len(st["vents"]), vents_unlinked=info["vent_pen"],
         armor_touching_no_room=info["floating"], combat_rooms_without_armor=info["unarmored_rooms"],
         priority_rooms_without_armor=info["unarmored_priority"],
-        pattern=info.get("pattern", 0.0),
+        pattern=info.get("pattern", 0.0), boosted_rooms=info.get("boosted", 0),
         sweet_spot_shortfall=info["range_under"], sweet_spot_excess=info["range_over"],
         center_rooms=len(getattr(m, "CENTER_IDX", ())), center_distance=info.get("center_dist", 0.0),
     )

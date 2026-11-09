@@ -28,7 +28,7 @@ TYPE_CAT = {
     "Carrier": "hangar", "AntiCraft": "antiair",
     "Engine": "antimissile", "AntiTeleport": "antitele", "Trap": "antitele", "Teleport": "boarding",
     "Android": "crewsupport", "Medical": "crewsupport", "Reviver": "crewsupport", "Stealth": "cloak", "Radar": "cloak",
-    "Command": "command", "Bridge": "command", "Booster": "command",
+    "Command": "command", "Bridge": "command", "Booster": "booster",
     "Bedroom": "crew", "Training": "noncombat", "Council": "noncombat", "Research": "noncombat",
     "Gas": "resource", "Mineral": "resource", "Storage": "resource", "Supply": "resource", "Printer": "resource",
     "Recycling": "resource",
@@ -37,7 +37,7 @@ STRUCT = {"Armor": "armor", "Lift": "lift", "Corridor": "corridor", "Wall": "arm
 CAT_KIND = {"reactor": "priority", "shield": "priority", "priority": "priority",
             "laser": "combat", "antiair": "combat", "missile": "combat", "hangar": "combat",
             "antimissile": "combat", "antitele": "combat", "boarding": "combat", "crewsupport": "combat",
-            "cloak": "combat", "shieldsupport": "combat", "command": "combat",
+            "cloak": "combat", "shieldsupport": "combat", "command": "combat", "booster": "combat",
             "utility": "combat", "combat": "combat", "crew": "noncombat", "noncombat": "noncombat",
             "resource": "resource"}
 KIND_ORDER = ["priority", "combat", "noncombat", "resource"]
