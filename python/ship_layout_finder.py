@@ -643,20 +643,27 @@ def vent_runs(vents):
     return runs
 
 
+def useless_vents(vlinks, lifts=()):
+    """Game-like vents: the vents of every passage that does not join two different rooms/lifts, or that
+    joins only non-combat rooms (crew never need a bedroom-to-bedroom passage)."""
+    links = dict(vlinks)
+    out = []
+    for run in vent_runs(links):
+        ends = set()
+        for v in run:
+            ends.update(("r", r) for _, _, r in links[v])
+        x0, y = run[0]
+        x1 = run[-1][0]
+        ends.update(("l", t) for t in ((x0 - 1, y), (x1 + 1, y)) if t in lifts)
+        serves_combat = any(k == "l" or v < NC for k, v in ends)
+        if len(ends) < 2 or not serves_combat:
+            out.extend(run)
+    return out
+
+
 def vent_penalty(vlinks, lifts=()):
-    if VENT_GAME_LINKS:              # every vent of a passage that does not join two different rooms/lifts
-        links = dict(vlinks)
-        bad = 0
-        for run in vent_runs(links):
-            ends = set()
-            for v in run:
-                ends.update(("r", r) for _, _, r in links[v])
-            x0, y = run[0]
-            x1 = run[-1][0]
-            ends.update(("l", t) for t in ((x0 - 1, y), (x1 + 1, y)) if t in lifts)
-            if len(ends) < 2:
-                bad += len(run)
-        return bad
+    if VENT_GAME_LINKS:              # every vent of a passage that is not useful (see useless_vents)
+        return len(useless_vents(vlinks, lifts))
     return sum(1 for _, links in vlinks if len({r for _, _, r in links}) < 2)
 
 
@@ -2432,6 +2439,16 @@ def prune_vents(st, res):
     least as well without it (its tile then goes to armor). With CONNECT_ALL a vent that keeps a room
     reachable always stays. Repeats until no vent can go."""
     cur, best = st, res
+    if VENT_GAME_LINKS and cur["vents"]:
+        occ = occupancy(cur)
+        if occ:
+            tiles, lifts, vents = occ
+            bad = set(useless_vents(vent_links(cur["pos"], vents, tiles), lifts))
+            if bad:
+                cand = dict(pos=cur["pos"], lifts=cur["lifts"], vents=[v for v in cur["vents"] if tuple(v) not in bad])
+                r = finalize(cand)
+                if r:
+                    cur, best = cand, r
     changed = True
     while changed and cur["vents"]:
         changed = False
@@ -2442,6 +2459,125 @@ def prune_vents(st, res):
                 cur, best, changed = cand, r, True
                 break
     return cur, best
+
+
+def shift_band(st, axis, at, d, lo=None, hi=None):
+    """Slide a deck (axis 1: rows) or a column of rooms (axis 0) by one tile. d = +1 moves the rooms whose
+    top/left edge is at or after `at` towards the bottom/right; d = -1 moves the rooms whose bottom/right edge
+    is at or before `at` towards the top/left. lo..hi optionally limits the rooms to a stretch of the other
+    axis (e.g. between two lifts). Rooms that cannot move (hull edge, a lift, a vent or a room that stays in
+    the way) stay where they are, and so do the rooms they block. Typical use: move an empty row - where armor
+    goes - from the hull edge to between two decks, where each armor tile protects two rooms."""
+    pos = st["pos"]
+
+    def lead(r):                                   # coordinate that decides which side of the cut a room is on
+        x, y = pos[r]
+        w, h = ROOMS[r][2], ROOMS[r][3]
+        if axis == 1:
+            return y if d > 0 else y + h - 1
+        return x if d > 0 else x + w - 1
+
+    def across(r):                                 # extent along the other axis
+        x, y = pos[r]
+        return (y, y + ROOMS[r][3] - 1) if axis == 0 else (x, x + ROOMS[r][2] - 1)
+
+    moving = {r for r in range(NR) if (lead(r) >= at if d > 0 else lead(r) <= at)
+              and (lo is None or (across(r)[0] >= lo and across(r)[1] <= hi))}
+    if not moving:
+        return dict(pos=pos, lifts=st["lifts"], vents=st["vents"])
+    fixed = set()
+    for x, y0, y1 in st["lifts"]:
+        fixed.update((x, y) for y in range(y0, y1 + 1))
+    fixed.update(tuple(v) for v in st["vents"])
+    dx, dy = (0, d) if axis == 1 else (d, 0)
+    changed = True
+    while changed:                                 # drop rooms that cannot move until the moving set is stable
+        changed = False
+        stay = set()
+        for r in range(NR):
+            if r not in moving:
+                x, y = pos[r]
+                stay.update((xx, yy) for yy in range(y, y + ROOMS[r][3]) for xx in range(x, x + ROOMS[r][2]))
+        for r in sorted(moving):
+            x, y = pos[r]
+            nx, ny = x + dx, y + dy
+            w, h = ROOMS[r][2], ROOMS[r][3]
+            if (not rect_ok(nx, ny, w, h, r)
+                    or any((xx, yy) in stay or (xx, yy) in fixed for yy in range(ny, ny + h) for xx in range(nx, nx + w))):
+                moving.discard(r)
+                changed = True
+                break
+    new = [(x + dx, y + dy) if r in moving else (x, y) for r, (x, y) in enumerate(pos)]
+    return dict(pos=new, lifts=st["lifts"], vents=st["vents"])
+
+
+def stretch_lifts(st, d):
+    """Every lift one tile longer at its top (d = -1) or bottom (d = +1) end, where that tile is free."""
+    occ = occupancy(dict(st, lifts=[]))
+    if occ is None:
+        return None
+    tiles = occ[0]
+    lifts, changed = [], False
+    for x, y0, y1 in st["lifts"]:
+        ny = y0 - 1 if d < 0 else y1 + 1
+        if free_tile(x, ny) and (x, ny) not in tiles and (x, ny) not in occ[2]:
+            lifts.append((x, ny, y1) if d < 0 else (x, y0, ny))
+            changed = True
+        else:
+            lifts.append((x, y0, y1))
+    return dict(pos=st["pos"], lifts=lifts, vents=st["vents"]) if changed else None
+
+
+def band_polish(st, res, deadline=None, rounds=8):
+    """Try sliding every deck / column of rooms by one tile (shift_band) and keep the best improvement,
+    repeatedly. Fixes what single-room moves cannot, like an armor belt on the hull edge that would protect
+    twice as much between two decks."""
+    cur, best = st, res
+    for _ in range(rounds):
+        top = None
+        # stretches of the other axis between lift columns (for decks) as well as the whole width
+        cols = sorted({x for x, _, _ in cur["lifts"]})
+        cuts = [-1] + cols + [W]
+        spans = [(None, None)] + [(cuts[i] + 1, cuts[i + 1] - 1) for i in range(len(cuts) - 1) if cuts[i + 1] - cuts[i] > 2]
+        for axis, n in ((1, H), (0, W)):
+            for at in range(n):
+                for d in (1, -1):
+                    for lo, hi in (spans if axis == 1 else [(None, None)]):
+                        if deadline and time.time() > deadline:
+                            return cur, best
+                        cand = shift_band(cur, axis, at, d, lo, hi)
+                        if cand["pos"] == cur["pos"] or occupancy(cand) is None:
+                            continue
+                        r = finalize(cand)
+                        if not r:
+                            continue
+                        if r[0] <= best[0] + 1e-6 and r[2]["arm_sum"] > best[2]["arm_sum"]:
+                            # more armor but worse overall (usually rooms cut off from their lift): stretch the
+                            # lifts into the moved deck, then reconnect what is still cut off, and judge again
+                            if axis == 1:
+                                ext = stretch_lifts(cand, d)
+                                if ext is not None:
+                                    re = finalize(ext)
+                                    if re and re[0] > r[0]:
+                                        cand, r = ext, re
+                            if r[2]["unreach"] > best[2]["unreach"]:
+                                cand, r = repair_connections(cand, r, random.Random(at * 7 + d))
+                        if r[0] > best[0] + 1e-6 and (top is None or r[0] > top[1][0]):
+                            top = (cand, r)
+        if top is None:
+            break
+        cur, best = top
+    return cur, best
+
+
+def final_touch(st, res, rng, deadline=None):
+    """Clean-up for a finished layout: slide decks/columns, reconnect combat rooms, drop unneeded vents."""
+    st, res = band_polish(st, res, deadline)
+    if CONNECT_ALL:
+        st, res = repair_connections(st, res, rng)
+    if st["vents"]:
+        st, res = prune_vents(st, res)
+    return st, res
 
 
 def cut_off(state):

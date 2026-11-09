@@ -89,6 +89,11 @@ optimizer learned:
   Pixel Starships wiki): vents move crew sideways only, connect to a room only where they touch its bottom row, and
   may sit side by side as a passage (a passage beside a lift connects to it). Vents that do not help are removed after
   each search. With these rules the #1 ship is fully connected through its 9 vents.
+* **Final clean-up** (always on): at the end of each search round the best layouts get a clean-up pass:
+  whole decks and columns of rooms are slid by one tile where that scores better (for example moving an armor belt
+  from the hull edge to between two decks, where each tile protects two rooms; lifts are stretched with the deck),
+  cut-off combat rooms are reconnected, and vents that do not help are removed. A vent passage only counts if it
+  serves a combat room or a lift: a bedroom-to-bedroom vent is always removed.
 * **Connect every combat room** (*Armor, lifts and vents*, on by default; optimizer `CONNECT_ALL`, section 14): after
   each search the optimizer adds the vent or lift that reconnects the most cut-off combat rooms, until all are
   reachable (if the hull, vent count and lift count allow it).
