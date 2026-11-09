@@ -75,19 +75,14 @@
 
       <details open>
         <summary>Rooms</summary>
-        <h4>Priority rooms (width, height, count)</h4>
-        <div id="priorityRooms" class="rows"></div>
-        <button class="small" data-add="priorityRooms">+ add</button>
-        <h4>Combat rooms (width, height, count)</h4>
-        <div id="combatRooms" class="rows"></div>
-        <button class="small" data-add="combatRooms">+ add</button>
-        <h4>Non-combat rooms (name, symbol, width, height, count)</h4>
-        <div id="noncombatRooms" class="rows"></div>
-        <button class="small" data-add="noncombatRooms">+ add</button>
-        <h4>Resource rooms (name, symbol, width, height, count)</h4>
-        <p class="muted">Placed on <code>r</code> tiles in the hull. Scored like non-combat rooms.</p>
-        <div id="resourceRooms" class="rows"></div>
-        <button class="small" data-add="resourceRooms">+ add</button>
+        <p class="muted">Name each room, pick its type and set how many. The type decides how it is placed:
+          <b>priority</b> rooms (reactors, shields) get the most armor, <b>combat</b> rooms are armored and linked
+          for crew travel, <b>non-combat</b> rooms stay away from armor and lifts, <b>resource</b> rooms go on <code>r</code> tiles.
+          Armor = this room's own sweet spot (e.g. <code>4-6</code>); leave empty for the default.</p>
+        <div id="roomSummary" class="roomsummary"></div>
+        <div id="roomList"></div>
+        <h4>Add a room</h4>
+        <div id="roomAdd" class="addchips"></div>
         <label class="inline"><input type="checkbox" id="resAnywhere"> Resource rooms may also use normal <code>x</code> tiles</label>
         <label class="inline"><input type="checkbox" id="placeBonus"> Fill leftover space with bonus rooms</label>
       </details>

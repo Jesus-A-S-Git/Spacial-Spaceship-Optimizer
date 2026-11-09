@@ -66,12 +66,74 @@ def build_injection(cfg):
     if cr:
         lines.append(f"COMBAT_ARMOR_RANGE = ({int(cr[0])}, {int(cr[1])})")
     lines.append(f"PLACE_BONUS_ROOMS = {bool(cfg.get('place_bonus_rooms', True))}")
-    lines.append(f"PRIORITY_ROOMS = {_rooms(cfg.get('priority_rooms', []), 'priority')!r}")
-    lines.append(f"COMBAT_ROOMS = {_rooms(cfg.get('combat_rooms', []), 'combat')!r}")
-    lines.append(f"NONCOMBAT_ROOMS = {_rooms(cfg.get('noncombat_rooms', []), 'noncombat', True)!r}")
-    lines.append(f"RESOURCE_ROOMS = {_rooms(cfg.get('resource_rooms', []), 'resource', True)!r}")
+    if "rooms" in cfg:
+        groups, meta = categorized_rooms(cfg["rooms"])
+    else:                                       # older page: separate tables per kind
+        groups = dict(priority=_rooms(cfg.get('priority_rooms', []), 'priority'),
+                      combat=_rooms(cfg.get('combat_rooms', []), 'combat'),
+                      noncombat=_rooms(cfg.get('noncombat_rooms', []), 'noncombat', True),
+                      resource=_rooms(cfg.get('resource_rooms', []), 'resource', True))
+        meta = None
+    lines.append(f"PRIORITY_ROOMS = {groups['priority']!r}")
+    lines.append(f"COMBAT_ROOMS = {groups['combat']!r}")
+    lines.append(f"NONCOMBAT_ROOMS = {groups['noncombat']!r}")
+    lines.append(f"RESOURCE_ROOMS = {groups['resource']!r}")
     lines.append(f"RESOURCE_ANYWHERE = {bool(cfg.get('resource_anywhere', True))}")
-    return "\n".join(lines)
+    return "\n".join(lines), meta
+
+
+KINDS = ("priority", "combat", "noncombat", "resource")
+# symbols for non-combat / resource rows: upper case, never one the optimizer reserves (A L V P x . # ~)
+NC_SYMBOLS = "XBCDEFGHIJKMNOQRSTUWYZ"
+
+
+def _armor_range(v, label):
+    """'' / None = use the default sweet spot; '4-6' or [4, 6] = this room's own range."""
+    if v in (None, "", "auto"):
+        return None
+    if isinstance(v, str):
+        parts = v.replace(" ", "").replace("to", "-").split("-")
+        if len(parts) != 2:
+            raise ValueError(f"{label}: armor sweet spot must look like 4-6 (or be left empty).")
+        v = parts
+    try:
+        lo, hi = int(v[0]), int(v[1])
+    except (TypeError, ValueError, IndexError):
+        raise ValueError(f"{label}: armor sweet spot must look like 4-6 (or be left empty).")
+    if not 0 <= lo <= hi:
+        raise ValueError(f"{label}: armor sweet spot needs low <= high.")
+    return (lo, hi)
+
+
+def categorized_rooms(rows):
+    """Turn the page's room list (name, category, kind, size, count, armor) into the optimizer's room
+    groups, one group per row, and return per-room labels in the order the optimizer builds ROOMS."""
+    groups = {k: [] for k in KINDS}
+    order = {k: [] for k in KINDS}
+    syms = iter(NC_SYMBOLS)
+    for i, row in enumerate(rows):
+        kind = row.get("kind")
+        if kind not in KINDS:
+            raise ValueError(f"Room row {i + 1}: unknown room kind {kind!r}.")
+        name = str(row.get("name") or row.get("catLabel") or "Room").strip()[:40]
+        w, h, c = int(row.get("w", 0)), int(row.get("h", 0)), int(row.get("count", 0))
+        if c <= 0:
+            continue
+        if w <= 0 or h <= 0:
+            raise ValueError(f"{name}: width and height must be at least 1.")
+        if kind in ("priority", "combat"):
+            rg = _armor_range(row.get("armor"), name)
+            groups[kind].append((w, h, c) + ((rg,) if rg else ()))
+        else:
+            try:
+                sym = next(syms)
+            except StopIteration:
+                raise ValueError(f"Too many non-combat / resource room rows (at most {len(NC_SYMBOLS)}).")
+            groups[kind].append((name, sym, w, h, c))
+        info = dict(name=name, cat=str(row.get("cat", kind)), catLabel=str(row.get("catLabel", kind)), kind=kind)
+        order[kind].extend(dict(info, n=j + 1, of=c) for j in range(c))
+    meta = order["priority"] + order["combat"] + order["noncombat"] + order["resource"]
+    return groups, meta
 
 
 def build_module(cfg, source_path):
@@ -81,7 +143,8 @@ def build_module(cfg, source_path):
         raise RuntimeError("Optimizer source has no END CONFIG marker; cannot inject settings.")
     # multiprocessing is not available in the browser and the single-process driver never uses it
     src = src.replace("from multiprocessing import Pool, Value", "Pool = Value = None")
-    src = src.replace(MARKER, build_injection(cfg) + "\n" + MARKER, 1)
+    injection, meta = build_injection(cfg)
+    src = src.replace(MARKER, injection + "\n" + MARKER, 1)
     sys.argv = ["ship_layout_finder.py"]     # the optimizer reads --hull/--top50 from argv at import time
     mod = types.ModuleType("ship_layout_finder")
     mod.__dict__["__file__"] = "ship_layout_finder.py"
@@ -93,6 +156,9 @@ def build_module(cfg, source_path):
     if need > len(mod.ALL_TILES):
         raise ValueError(f"Hull has {len(mod.ALL_TILES)} tiles but the rooms ({need - mod.ARMOR_COUNT}) plus "
                          f"armor ({mod.ARMOR_COUNT}) need at least {need}. Use a bigger hull or fewer rooms/armor.")
+    if meta is not None and len(meta) != mod.NR:
+        raise RuntimeError(f"Room bookkeeping mismatch ({len(meta)} labels for {mod.NR} rooms).")
+    mod.ROOM_META = meta
     if mod.MIN_LIFTS > mod.MAX_LIFTS:
         raise ValueError("Min lifts cannot exceed max lifts.")
     return mod
@@ -106,7 +172,13 @@ def layout_json(m, res):
     for r, (x, y) in enumerate(st["pos"]):
         n, sym, w, h, _, comb = m.ROOMS[r]
         rg = m.ARMOR_RANGES[r]
-        rooms.append(dict(name=n, sym=sym, w=w, h=h, x=x, y=y, combat=bool(comb),
+        meta = getattr(m, "ROOM_META", None)
+        extra = {}
+        if meta:
+            md = meta[r]
+            n = md["name"] + (f" #{md['n']}" if md["of"] > 1 else "")
+            extra = dict(label=md["name"], cat=md["cat"], catLabel=md["catLabel"], kind=md["kind"])
+        rooms.append(dict(extra, name=n, sym=sym, w=w, h=h, x=x, y=y, combat=bool(comb),
                           priority=r in m.PRIORITY_SET,
                           armor=touch.get(r, 0) if comb else None,
                           range=list(rg) if rg else None))
