@@ -132,15 +132,16 @@ function calibration(a) {
   const c = a.calibration;
   if (!c) { $("calibText").textContent = "No calibration in this data."; return; }
   const last = c.rounds[c.rounds.length - 1] || {};
-  const before = (c.rounds[0] || {}).real_beats_optimizer_before_fit || {};
+  const before = last.real_beats_optimizer_before_fit || {};
   const after = last.real_beats_optimizer_after_fit || {};
   $("calibText").replaceChildren(
     el("p", { text: `For ${c.ships_used} top ships, the optimizer built its own layout on the same hull with the same rooms ` +
       `(${c.search.iters} search steps each), and the score weights were fitted so that the real top layout scores higher. ` +
       `Odd-ranked ships were used for fitting and even-ranked ships only for checking.` }),
-    el("p", { text: `On the held-out ships the real layout beat the optimizer's in ${pct(before.test)} of cases with the default weights ` +
-      `and ${pct(after.test)} with the fitted weights. When this is already high, the weights were not the problem: the search ` +
-      `simply does not reach top-player layouts from scratch, which is why the optimizer now starts from them.` }));
+    el("p", { text: `In the last round, on held-out ships, the real layout beat the optimizer's in ${pct(before.test)} of cases with the ` +
+      `starting weights and ${pct(after.test)} with the fitted weights. High numbers mean the score already prefers the top players' ` +
+      `layouts: the weights are not what holds the optimizer back, the search is. It does not reach top-player layouts from ` +
+      `scratch, which is why the optimizer now starts from them.` }));
   const rt = $("calibRounds");
   rt.replaceChildren(el("tr", {}, el("th", { text: "Round" }), el("th", { class: "num", text: "Ships" }),
     el("th", { class: "num", text: "Real wins before fit" }), el("th", { class: "num", text: "Real wins after fit" })));
