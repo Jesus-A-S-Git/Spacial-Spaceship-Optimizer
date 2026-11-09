@@ -585,7 +585,16 @@ def main():
         perturb = [int(v) for v in a.perturb.split(",") if v.strip()]
         result["calibration"] = calibrate(ships, result["patterns"], a.calibrate, perturb, rounds=a.rounds,
                                           iters=a.iters, polish=max(20, a.iters // 4))
-    with open(os.path.join(a.out_dir, "top_analysis.json"), "w", encoding="utf-8") as f:
+    out = os.path.join(a.out_dir, "top_analysis.json")
+    # keep the benchmark (tools/benchmark_top.py --into) of the same top-100 data when only re-analysing
+    try:
+        with open(out, encoding="utf-8") as f:
+            prev = json.load(f)
+        if "benchmark" in prev and prev.get("updated") == updated:
+            result["benchmark"] = prev["benchmark"]
+    except (OSError, ValueError):
+        pass
+    with open(out, "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, separators=(",", ":"))
     print("Wrote data/top_layouts.json and data/top_analysis.json")
 

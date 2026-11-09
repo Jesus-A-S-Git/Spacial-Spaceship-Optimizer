@@ -6,6 +6,11 @@ on:
   schedule:
     - cron: "17 6 1,15 * *"
   workflow_dispatch:
+    inputs:
+      game_data_only:
+        description: "Only rebuild the ship and room lists (skip the top-100 fetch, analysis and benchmark)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -25,11 +30,13 @@ jobs:
         run: python3 tools/build_room_list.py
       - name: Fetch top-100 player layouts (PixyShip)
         # PixyShip can be slow or refuse requests; the ship and room lists are still saved if this fails
+        if: ${{ !inputs.game_data_only }}
         continue-on-error: true
         run: |
           python3 tools/pixyship_fetch_layouts.py --top 100 --out build/top --delay 1
       - name: Analyse top-100 layouts and calibrate the optimizer
         # writes data/top_layouts.json (compact) and data/top_analysis.json (stats, patterns, weights)
+        if: ${{ !inputs.game_data_only }}
         continue-on-error: true
         run: |
           if [ -f build/top/layouts.json ]; then
@@ -37,6 +44,10 @@ jobs:
             # how close the optimizer gets to the real ships, 16 ships x 4 setups, ~45 minutes
             python3 tools/benchmark_top.py --ships 16 --seconds 40 --configs original,top,top+similar,top+templates --into data/top_analysis.json
           fi
+      - name: Re-analyse the saved top-100 layouts with the new game data
+        # game-data-only runs: the build and room-recommendation tables use ship and room levels
+        if: ${{ inputs.game_data_only }}
+        run: python3 tools/analyze_top.py
       - name: Commit if changed
         run: |
           git config user.name "github-actions[bot]"
@@ -46,5 +57,5 @@ jobs:
             echo "Data unchanged."
           else
             git commit -m "Refresh game data and top-100 layouts"
-            git push
+            git push origin "HEAD:${GITHUB_REF_NAME}"
           fi
