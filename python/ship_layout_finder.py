@@ -267,7 +267,7 @@ CONNECT_ALL = False
 #     value, more armor on priority rooms, 2 lifts like them; crew reach is traded away the way top players do).
 #     Also on the command line:  --style top
 STYLE = "original"
-TOP_STYLE = dict(W_ARMOR=4.0, W_DISC=30.0, W_TRAVEL=0.75, W_CORNER=0.4, W_GAP=2.5,
+TOP_STYLE = dict(W_ARMOR=5.0, W_DISC=20.0, W_TRAVEL=0.75, W_CORNER=0.4, W_GAP=2.5,
                  MIN_LIFTS=1, MAX_LIFTS=4, W_LIFT_COUNT=18.0)
 
 # ---- ROOMS: (width, height, how_many[, (armor_low, armor_high)]) ----------------------------------------------
@@ -2636,8 +2636,40 @@ def band_polish(st, res, deadline=None, rounds=8):
     return cur, best
 
 
+def swap_polish(st, res, deadline=None, passes=3):
+    """Try swapping every pair of same-size rooms that differ in type (e.g. a combat room into a spot beside
+    free armor space, a bedroom out of it) and keep each swap that scores better. Swapping equal-size rooms
+    never makes a layout illegal, so this is a cheap way to fix which room sits where."""
+    cur, best = st, res
+    groups = defaultdict(list)
+    for r in range(NR):
+        groups[(ROOMS[r][2], ROOMS[r][3])].append(r)
+    tags = _TAGS
+    for _ in range(passes):
+        improved = False
+        for rooms in groups.values():
+            for i in range(len(rooms)):
+                for j in range(i + 1, len(rooms)):
+                    a, b = rooms[i], rooms[j]
+                    if tags[a] == tags[b] and ROOM_KIND[a] == ROOM_KIND[b] and ROOM_BOOSTS[a:a + 1] == ROOM_BOOSTS[b:b + 1]:
+                        continue                       # identical rooms: a swap changes nothing
+                    if deadline and time.time() > deadline:
+                        return cur, best
+                    pos = list(cur["pos"])
+                    pos[a], pos[b] = pos[b], pos[a]
+                    cand = dict(pos=pos, lifts=cur["lifts"], vents=cur["vents"])
+                    r = finalize(cand)
+                    if r and r[0] > best[0] + 1e-6:
+                        cur, best, improved = cand, r, True
+        if not improved:
+            break
+    return cur, best
+
+
 def final_touch(st, res, rng, deadline=None):
-    """Clean-up for a finished layout: slide decks/columns, reconnect combat rooms, drop unneeded vents."""
+    """Clean-up for a finished layout: swap same-size rooms, slide decks/columns, reconnect combat rooms,
+    drop unneeded vents."""
+    st, res = swap_polish(st, res, deadline)
     st, res = band_polish(st, res, deadline)
     if CONNECT_ALL:
         st, res = repair_connections(st, res, rng)
