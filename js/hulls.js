@@ -64,7 +64,8 @@ const Hulls = (() => {
       if (seen.has(key)) continue;
       seen.add(key);
       const id = parseInt(pick(e, "id", "shipdesignid"), 10);
-      list.push({ name, rows, id: isNaN(id) ? null : id, tiles: rows.join("").split("x").length - 1 });
+      const lv = parseInt(pick(e, "level", "shiplevel"), 10);
+      list.push({ name, rows, id: isNaN(id) ? null : id, tiles: rows.join("").split("x").length - 1, level: isNaN(lv) ? null : lv });
     }
     return list.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
   }

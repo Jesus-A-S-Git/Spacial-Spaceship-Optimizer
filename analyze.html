@@ -21,6 +21,36 @@
       <div id="tiles" class="tiles"></div>
     </section>
 
+    <nav class="panel jump" id="jump" hidden>
+      <a href="#secTiers">Top 10 vs the rest</a><a href="#secExplorer">Build explorer</a><a href="#secBuilds">Builds</a>
+      <a href="#secHulls">Hulls</a><a href="#secGallery">Layouts</a><a href="#secRooms">Rooms per ship</a>
+      <a href="#secTrophy">What goes with trophies</a><a href="#secEdge">Hull edge</a><a href="#secAdj">Neighbours</a>
+      <a href="#secArmor">Armor and lifts</a><a href="#secCalib">Optimizer benchmark</a>
+    </nav>
+
+    <section class="panel" id="secTiers" hidden>
+      <h2>What the top 10 do differently</h2>
+      <p class="muted">Average per ship in each rank band. Shaded cells are the highest of the four bands.</p>
+      <div class="tablewrap free"><table id="tierTable"></table></div>
+      <h3>Main weapon by rank band</h3>
+      <div id="weaponMix" class="stack"></div>
+      <div id="weaponLegend" class="legend"></div>
+      <h3>Rooms the top 10 run more often</h3>
+      <p class="muted">Share of ships that have the room: top 10 against ranks 11-100.</p>
+      <div class="tablewrap free"><table id="top10Rooms"></table></div>
+    </section>
+
+    <section class="panel" id="secExplorer" hidden>
+      <h2>Build explorer</h2>
+      <p class="muted">Pick a build to see which rooms its top-100 ships run, per 100 hull tiles (so you can scale it to
+        your hull) and which room of each type they prefer. <b>Plan this build</b> opens the optimizer with the room
+        recommender set to it: it scales the list to your hull and keeps only rooms your ship level can build.</p>
+      <div class="toolbar"><select id="exPick" aria-label="Build"></select>
+        <a id="exPlan" class="btnlink" href="#">Plan this build in the optimizer</a></div>
+      <div id="exInfo" class="muted"></div>
+      <div class="tablewrap free"><table id="exTable"></table></div>
+    </section>
+
     <section class="panel" id="secHulls" hidden>
       <h2>Hulls they fly</h2>
       <p class="muted">Open a hull in the optimizer: it then starts searching from these players' layouts.</p>
@@ -60,6 +90,13 @@
       <div id="roomBars" class="hbars"></div>
       <h3>Most used rooms</h3>
       <div class="tablewrap tall"><table id="popTable"></table></div>
+    </section>
+
+    <section class="panel" id="secTrophy" hidden>
+      <h2>What goes with more trophies</h2>
+      <p class="muted">Rank correlation between trophies and each measure over the top 100 (+1 = always more trophies with more
+        of it, 0 = no link). The top 100 are close together, so these links are weak: read them as hints, not rules.</p>
+      <div id="trophyBars" class="dbars"></div>
     </section>
 
     <section class="panel" id="secEdge" hidden>

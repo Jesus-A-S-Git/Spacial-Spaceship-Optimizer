@@ -49,3 +49,13 @@ table.heat td.na { background: transparent; }
 td.hi { background: #1c3350; font-weight: 600; }
 .buildlabel { margin: 4px 0; font-size: 13px; }
 td.buildcell { font-size: 12px; }
+
+.jump { display: flex; flex-wrap: wrap; gap: 6px; }
+.jump a { color: var(--muted); text-decoration: none; padding: 3px 10px; border: 1px solid var(--border); border-radius: 14px; font-size: 13px; }
+.jump a:hover { color: var(--text); border-color: var(--accent); }
+html { scroll-behavior: smooth; }
+section.panel { scroll-margin-top: 10px; }
+.stack { display: grid; grid-template-columns: 110px 1fr; gap: 6px 10px; align-items: center; font-size: 13px; }
+.stack .bar { display: flex; height: 18px; border-radius: 4px; overflow: hidden; background: var(--track); }
+.stack .bar span { height: 100%; }
+td.pos { color: #8fd19e; } td.neg { color: #ffb86b; }

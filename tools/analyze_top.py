@@ -362,6 +362,175 @@ def builds(ships):
                 offense_types=[list(t) for t in OFFENSE], defense_types=[list(t) for t in DEFENSE])
 
 
+# ------------------------------------------------------------------ room recommendations and deeper stats
+def weapon_pair(off):
+    """(primary, secondary) weapon keys of a ship, same rule as build_label: secondary = at least 25% of weapons."""
+    total = sum(off.values())
+    if not total:
+        return None, None
+    order = sorted(off, key=lambda k: -off[k])
+    return order[0], (order[1] if off[order[1]] / total >= 0.25 else None)
+
+
+def room_profile(group):
+    """What a group of top ships builds, per 100 usable hull tiles, so it scales to any hull size.
+    cats: category -> [rooms per 100 tiles, room tiles per 100 tiles, ships with it (share)]
+    families: category -> [[room name, w, h, rooms per ship, share of ships with it]] (most used first)"""
+    n = len(group)
+    tiles = [len(s.inside) or 1 for s in group]
+    cats, fam, has = defaultdict(lambda: [0.0, 0.0]), defaultdict(Counter), defaultdict(Counter)
+    sizes = {}
+    for s, t in zip(group, tiles):
+        seen = set()
+        for r in s.rooms:
+            cats[r["cat"]][0] += 100 / t
+            cats[r["cat"]][1] += 100 * r["w"] * r["h"] / t
+            fam[r["cat"]][r["name"]] += 1
+            sizes.setdefault(r["name"], (r["w"], r["h"]))
+            seen.add((r["cat"], r["name"]))
+        for c, nm in seen:
+            has[c][nm] += 1
+    with_cat = Counter(c for s in group for c in {r["cat"] for r in s.rooms})
+    return dict(
+        ships=n,
+        ranks=sorted(s.lay["rank"] for s in group),
+        hull_tiles=round(statistics.mean(tiles), 1),
+        armor=round(100 * statistics.mean(len(s.armor) / t for s, t in zip(group, tiles)), 2),
+        lifts=round(statistics.mean(len({x for x, _, _ in s.lifts}) for s in group), 2),
+        vents=round(statistics.mean(len(s.vents) for s in group), 2),
+        cats={c: [round(v[0] / n, 3), round(v[1] / n, 2), round(with_cat[c] / n, 2)] for c, v in cats.items()},
+        families={c: [[nm, *sizes[nm], round(k / n, 2), round(has[c][nm] / n, 2)] for nm, k in cnt.most_common(10)]
+                  for c, cnt in fam.items()},
+    )
+
+
+def room_designs(path=os.path.join(ROOT, "data", "rooms.json")):
+    """room family name (no 'Lv N') -> [(level, minShip, power, powerGen)] from data/rooms.json."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            rooms = json.load(f)["rooms"]
+    except (OSError, ValueError, KeyError):
+        return {}
+    fam = defaultdict(list)
+    for r in rooms:
+        fam[base_name(r["name"])].append((r["levels"][1], r.get("minShip"), r.get("power", 0), r.get("powerGen", 0)))
+    return fam
+
+
+def power_ratio(s, fam):
+    """Power the reactors make / power the rooms can draw, with every room at the best level the ship's
+    level allows (top players do not power every room at once). None if unknown."""
+    lvl = s.lay.get("ship_level")
+    use = make = 0
+    for r in s.rooms:
+        ds = [d for d in fam.get(r["name"], []) if lvl is None or d[1] is None or d[1] <= lvl]
+        if not ds:
+            continue
+        d = max(ds)
+        use += d[2] or 0
+        make += d[3] or 0
+    return make / use if use and make else None
+
+
+def recommendations(ships):
+    """Room profiles for the website's room recommender: every top ship, each build (primary weapon +
+    optional secondary weapon), and each primary weapon on its own."""
+    by_pair, by_primary = defaultdict(list), defaultdict(list)
+    for s in ships:
+        p, q = weapon_pair(ship_profile(s)[0])
+        if p is None:
+            continue
+        by_pair[p + ("+" + q if q else "")].append(s)
+        by_primary[p].append(s)
+    fam = room_designs()
+    ratios = [v for v in (power_ratio(s, fam) for s in ships) if v]
+    return dict(
+        weapons=[list(t) for t in OFFENSE],
+        all=room_profile(ships),
+        builds={k: room_profile(v) for k, v in sorted(by_pair.items(), key=lambda kv: -len(kv[1]))},
+        primary={k: room_profile(v) for k, v in by_primary.items()},
+        power_ratio=[round(v, 3) for v in q3(ratios)] if ratios else None,
+    )
+
+
+def insights(ships):
+    """Deeper top-100 statistics for the analysis page."""
+    ships = sorted(ships, key=lambda s: s.lay["rank"])
+    out = {}
+    # what separates the top 10 from ranks 11-100 (rooms per ship, armor, lifts, vents, fill rate)
+    def summary(group):
+        if not group:
+            return None
+        cnt = [Counter(r["cat"] for r in s.rooms) for s in group]
+        fill = [(sum(r["w"] * r["h"] for r in s.rooms) + len(s.armor) + len(s.lift_cells) + len(s.vents)) / max(1, len(s.inside))
+                for s in group]
+        return dict(ships=len(group),
+                    cats={c: round(statistics.mean(k.get(c, 0) for k in cnt), 2) for c in CATS},
+                    armor=round(statistics.mean(len(s.armor) for s in group), 1),
+                    rooms=round(statistics.mean(len(s.rooms) for s in group), 1),
+                    lifts=round(statistics.mean(len({x for x, _, _ in s.lifts}) for s in group), 2),
+                    vents=round(statistics.mean(len(s.vents) for s in group), 1),
+                    hull_tiles=round(statistics.mean(len(s.inside) for s in group), 1),
+                    fill=round(statistics.mean(fill), 3),
+                    trophies=round(statistics.mean(s.lay.get("trophies") or 0 for s in group)))
+    out["tiers"] = [dict(label=lab, **summary(ships[a:b])) for lab, a, b in
+                    (("Top 10", 0, 10), ("Ranks 11-25", 10, 25), ("Ranks 26-50", 25, 50), ("Ranks 51-100", 50, 100))
+                    if ships[a:b]]
+    # trophies against a few build measures (rank correlation, -1..1)
+    def spearman(xs, ys):
+        def rk(v):
+            order = sorted(range(len(v)), key=lambda i: v[i])
+            r = [0.0] * len(v)
+            i = 0
+            while i < len(order):
+                j = i
+                while j + 1 < len(order) and v[order[j + 1]] == v[order[i]]:
+                    j += 1
+                for k in range(i, j + 1):
+                    r[order[k]] = (i + j) / 2
+                i = j + 1
+            return r
+        a, b = rk(xs), rk(ys)
+        ma, mb = statistics.mean(a), statistics.mean(b)
+        num = sum((x - ma) * (y - mb) for x, y in zip(a, b))
+        den = math.sqrt(sum((x - ma) ** 2 for x in a) * sum((y - mb) ** 2 for y in b))
+        return round(num / den, 3) if den else 0.0
+    troph = [s.lay.get("trophies") or 0 for s in ships]
+    measures = {
+        "armor": [len(s.armor) for s in ships],
+        "rooms": [len(s.rooms) for s in ships],
+        "weapons": [sum(ship_profile(s)[0].values()) for s in ships],
+        "lifts": [len({x for x, _, _ in s.lifts}) for s in ships],
+        "vents": [len(s.vents) for s in ships],
+        "hull_tiles": [len(s.inside) for s in ships],
+    }
+    for c in CATS:
+        v = [sum(1 for r in s.rooms if r["cat"] == c) for s in ships]
+        if sum(v) >= 10:
+            measures["cat:" + c] = v
+    out["trophy_corr"] = {k: spearman(v, troph) for k, v in measures.items()}
+    # how builds do: share of each primary weapon in each rank band
+    bands = (("Top 10", 0, 10), ("11-25", 10, 25), ("26-50", 25, 50), ("51-100", 50, 100))
+    mix = []
+    for lab, a, b in bands:
+        prim = Counter(weapon_pair(ship_profile(s)[0])[0] or "none" for s in ships[a:b])
+        mix.append(dict(label=lab, ships=len(ships[a:b]), primary=dict(prim)))
+    out["weapon_mix"] = mix
+    # rooms the top 10 run clearly more often than the rest (share of ships with the room)
+    top, rest = ships[:10], ships[10:]
+    def share(group):
+        c = Counter()
+        for s in group:
+            for nm in {(r["cat"], r["name"]) for r in s.rooms}:
+                c[nm] += 1
+        return {k: v / max(1, len(group)) for k, v in c.items()}
+    st, sr = share(top), share(rest)
+    diff = sorted(((k, st.get(k, 0), sr.get(k, 0)) for k in set(st) | set(sr)), key=lambda t: -(t[1] - t[2]))
+    out["top10_rooms"] = [[c, n, round(a, 2), round(b, 2)] for (c, n), a, b in diff[:12] if a - b >= 0.15]
+    out["top10_rare"] = [[c, n, round(a, 2), round(b, 2)] for (c, n), a, b in diff[::-1][:8] if b - a >= 0.15]
+    return out
+
+
 # ------------------------------------------------------------------ calibration
 FEATURES = [  # (weight, feature from finalize info; score = sum(weight * feature) + extras)
     ("W_ARMOR", lambda i, s: i["arm_sum"]),
@@ -572,6 +741,9 @@ def main():
                   f, ensure_ascii=False, separators=(",", ":"))
     result = analyse(ships)
     result["builds"] = builds(ships)
+    result["recommend"] = recommendations(ships)
+    result["insights"] = insights(ships)
+    result["levels"] = dict(Counter(l.get("ship_level") for l in lays if l.get("ship_level") is not None))
     result["updated"] = updated
     m0 = web_driver.build_module(dict(hull=["x" * 12] * 12, rooms=[], settings={"ARMOR_COUNT": 4}), os.path.join(ROOT, "python", "ship_layout_finder.py"))
     try:

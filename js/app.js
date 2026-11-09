@@ -54,6 +54,7 @@ const DEFAULTS = {
     W_SPREAD: 1.5, SPREAD_CAP: 24, W_VENT: 15, W_CENTER: 3, W_BOOST: 20, W_PATTERN: 3, W_SHELL: 3, W_NC_CLUSTER: 15, W_LIFT_DENSITY: 20,
   },
   search: { iters: 1200, polish: 300, restarts: 0, time_limit: 300, seed: 1, stagnation: 0, population: 24, cores: 0 },
+  plan: { primary: "missile", secondary: "hangar", level: "auto", special: false },
 };
 
 // Weight styles (Scoring weights > Style). "top" is the default: armor-first weights that bring layouts close
@@ -133,7 +134,8 @@ function loadSettings() {
         if (Object.entries(prev).every(([k, v]) => +set[k] === v)) s.settings = Object.assign({}, set, { W_ARMOR: STYLES.top.W_ARMOR, W_DISC: STYLES.top.W_DISC });
         s.style_v4 = true;
       }
-      return Object.assign(d, s, { settings: Object.assign(d.settings, s.settings || {}), search: Object.assign(d.search, s.search || {}) });
+      return Object.assign(d, s, { settings: Object.assign(d.settings, s.settings || {}), search: Object.assign(d.search, s.search || {}),
+        plan: Object.assign(d.plan, s.plan || {}) });
     }
   } catch (e) { /* storage blocked or corrupt: fall back to defaults */ }
   return clone(DEFAULTS);
@@ -175,6 +177,7 @@ function buildHull() {
     const ok = rows.length && rows.every((r) => r.length === rows[0].length && /^[xr.]+$/.test(r));
     const all = rows.join(""), tiles = all.split("x").length - 1, res = all.split("r").length - 1;
     $("hullInfo").textContent = ok ? `${rows[0].length} x ${rows.length}, ${tiles + res} usable tiles` + (res ? ` (${res} resource space)` : "") : "Invalid: rows must be equal length and use only x, r and .";
+    updateHullBadge();
   };
   t.addEventListener("input", () => { upd(); if ($("roomSummary").childElementCount) updateRoomSummary(); updateTopNote(); }); upd();
 }
@@ -322,6 +325,12 @@ function roomCard(room, idx) {
   const hint = el("div", { class: "rc-hint muted" });
   if (g) {
     hint.textContent = `Game room: ${GameRooms.describe(g)}` + (g.w !== room.w || g.h !== room.h ? ` (size changed to ${room.w}x${room.h})` : "");
+    const ship = currentShip(), lv = ship ? ship.level : null;
+    if (lv != null && g.minShip != null) {
+      const best = GameRooms.bestFor(g, lv);
+      if (!best) { hint.textContent += ` - needs ship level ${g.minShip}, your hull is level ${lv}`; hint.classList.add("bad"); }
+      else hint.textContent += ` - best at your level: Lv ${best.level}`;
+    }
   }
   card.append(hint);
 
@@ -365,6 +374,7 @@ function updateRoomSummary() {
   const parts = Object.entries(tot).filter(([, [n]]) => n).map(([k, [n, t]]) => `${KIND_LABELS[k].split(" (")[0]} ${n} (${t} tiles)`);
   box.append(el("div", { class: "muted" + (used > hullTiles ? " bad" : ""), text:
     `${parts.join(" · ") || "No rooms"}. Rooms + ${cfgState.settings.ARMOR_COUNT || 0} armor = ${used} of ${hullTiles} hull tiles` + (used > hullTiles ? " (too many!)" : "") }));
+  updateSteps();
 }
 function buildRooms() {
   const box = $("roomList");
@@ -419,7 +429,23 @@ function buildWeights() {
     box.append(g);
   });
 }
-function buildSearch() { buildGrid("search", SEARCH_FIELDS, cfgState.search, "1"); }
+function buildSearch() {
+  buildGrid("search", SEARCH_FIELDS, cfgState.search, "1");
+  const q = $("quickTime");
+  q.value = cfgState.search.time_limit;
+  q.onchange = () => { const n = Math.max(0, parseInt(q.value, 10) || 0); cfgState.search.time_limit = n; q.value = n; saveSettings(); buildSearch(); };
+  $("search").onchange = () => { q.value = cfgState.search.time_limit; markTimeChip(); };
+  const box = $("timeChips");
+  box.replaceChildren(...[[60, "1 min"], [300, "5 min"], [900, "15 min"], [3600, "1 hour"], [0, "Until I stop it"]].map(([v, t]) => {
+    const b = el("button", { class: "small", type: "button", "data-v": String(v), text: t });
+    b.onclick = () => { cfgState.search.time_limit = v; saveSettings(); buildSearch(); };
+    return b;
+  }));
+  markTimeChip();
+}
+function markTimeChip() {
+  [...$("timeChips").children].forEach((b) => b.classList.toggle("active", +b.dataset.v === +cfgState.search.time_limit));
+}
 function buildAll() { buildHull(); buildRooms(); buildStructure(); buildWeights(); buildSearch(); }
 
 // ---------------------------------------------------------------- top 100 (js/top.js)
@@ -532,6 +558,7 @@ function setIdleUi() {
   run = null;
   $("startBtn").disabled = !anyReady();
   $("stopBtn").disabled = true;
+  updateSteps();
 }
 function showError(msg) {
   const b = $("errorBox"); b.textContent = msg; b.hidden = false;
@@ -667,6 +694,7 @@ function start() {
   $("startBtn").disabled = true;
   $("stopBtn").disabled = false;
   $("status").textContent = `Starting on ${pool.length} core${pool.length > 1 ? "s" : ""}...`;
+  updateSteps();
   startRound();
 }
 function stop() {
@@ -807,10 +835,196 @@ function coordsText(l) {
   return lines.join("\n");
 }
 
+
+// ---------------------------------------------------------------- current hull, steps bar
+function hullRows() { return cfgState.hull.split("\n").map((r) => r.trim()).filter(Boolean); }
+function currentShip() { return Hulls.count ? Hulls.byRows(hullRows())[0] || null : null; }
+function updateHullBadge() {
+  const b = $("hullBadge");
+  if (!b) return;
+  const s = currentShip();
+  b.hidden = !s;
+  if (s) b.textContent = s.name + (s.level != null ? ` · level ${s.level}` : "");
+  if (typeof updatePlanLevel === "function") updatePlanLevel();
+  updateSteps();
+}
+function updateSteps() {
+  if (!$("steps")) return;
+  const rows = hullRows(), s = currentShip();
+  const tiles = rows.join("").replace(/[^xr]/g, "").length;
+  $("stepHull").textContent = s ? `${s.name}${s.level != null ? ", level " + s.level : ""}` : tiles ? `custom hull, ${tiles} tiles` : "no hull yet";
+  const n = cfgState.rooms.reduce((a, r) => a + (r.count || 0), 0);
+  const used = cfgState.rooms.reduce((a, r) => a + (r.count || 0) * r.w * r.h, 0) + (cfgState.settings.ARMOR_COUNT || 0);
+  $("stepRooms").textContent = n ? `${n} rooms${used > tiles ? " - too many for the hull" : ""}` : "no rooms yet";
+  $("stepRooms").classList.toggle("bad", used > tiles);
+  $("stepSearch").textContent = running ? "searching..." : found.length ? `best score ${found[0].score.toFixed(0)}` : anyReady() ? "ready" : "loading Python...";
+  const done = { hull: !!tiles, rooms: n > 0 && used <= tiles, search: found.length > 0 };
+  document.querySelectorAll("#steps li").forEach((li) => li.classList.toggle("done", !!done[li.dataset.step]));
+}
+document.querySelectorAll("#steps [data-goto]").forEach((b) => {
+  b.onclick = () => {
+    const t = $(b.dataset.goto);
+    if (!t) return;
+    if (t.tagName === "DETAILS") t.open = true;
+    t.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (t.tagName === "BUTTON" && !t.disabled) t.focus();
+  };
+});
+
+// ---------------------------------------------------------------- room recommendations (js/recommend.js)
+let planResult = null, planBefore = null;
+function planLevel() {
+  const v = cfgState.plan.level;
+  if (v !== "auto") return +v;
+  const s = currentShip();
+  return s && s.level != null ? s.level : null;
+}
+function updatePlanLevel() {
+  const sel = $("planLevel");
+  if (!sel) return;
+  const s = currentShip();
+  const levels = Hulls.count ? [...new Set(Hulls.search("", 99999).map((h) => h.level).filter((v) => v > 0))].sort((a, b) => a - b) : [];
+  const max = levels.length ? levels[levels.length - 1] : 14;
+  const auto = s && s.level != null ? `From hull (level ${s.level})` : `From hull (unknown: all levels)`;
+  sel.replaceChildren(el("option", { value: "auto", text: auto }),
+    ...Array.from({ length: max }, (_, i) => el("option", { value: String(i + 1), text: `Level ${i + 1}` })));
+  sel.value = String(cfgState.plan.level);
+  if (sel.value !== String(cfgState.plan.level)) sel.value = "auto";
+}
+function buildPlanner() {
+  const p = $("planPrimary"), s = $("planSecondary");
+  p.replaceChildren(...Recommender.WEAPONS.map(([k, n]) => el("option", { value: k, text: n })));
+  const fillSecondary = () => {
+    s.replaceChildren(el("option", { value: "", text: "None (dedicated build)" }),
+      ...Recommender.WEAPONS.filter(([k]) => k !== cfgState.plan.primary).map(([k, n]) => el("option", { value: k, text: n })));
+    if (cfgState.plan.secondary === cfgState.plan.primary) cfgState.plan.secondary = "";
+    s.value = cfgState.plan.secondary || "";
+  };
+  p.value = cfgState.plan.primary;
+  fillSecondary();
+  p.onchange = () => { cfgState.plan.primary = p.value; fillSecondary(); saveSettings(); markBuildChip(); };
+  s.onchange = () => { cfgState.plan.secondary = s.value; saveSettings(); markBuildChip(); };
+  $("planLevel").onchange = (e) => { cfgState.plan.level = e.target.value; saveSettings(); };
+  $("planSpecial").checked = !!cfgState.plan.special;
+  $("planSpecial").onchange = (e) => { cfgState.plan.special = e.target.checked; saveSettings(); };
+  $("planGo").onclick = runPlanner;
+  $("planUse").onclick = usePlan;
+  $("planUndo").onclick = () => {
+    if (!planBefore) return;
+    cfgState.rooms = planBefore.rooms; cfgState.settings.ARMOR_COUNT = planBefore.armor; planBefore = null;
+    saveSettings(); buildRooms(); buildStructure();
+    $("planUndo").hidden = true;
+    $("planStatus").textContent = "Your previous room list is back.";
+  };
+  updatePlanLevel();
+}
+function setPlanBuild(primary, secondary) {
+  cfgState.plan.primary = primary; cfgState.plan.secondary = secondary || "";
+  saveSettings(); buildPlanner(); markBuildChip();
+}
+function markBuildChip() {
+  const key = Recommender.buildKey(cfgState.plan.primary, cfgState.plan.secondary);
+  [...$("planBuilds").children].forEach((b) => b.classList.toggle("active", b.dataset.key === key));
+}
+function buildChips() {
+  const builds = Recommender.knownBuilds(Top100.analysis).filter((b) => b.ships >= 3);
+  $("planBuilds").replaceChildren(...(builds.length ? [el("span", { class: "muted", text: "Top-100 builds:" })] : []),
+    ...builds.map((b) => {
+      const c = el("button", { class: "small", type: "button", "data-key": b.key, title: `${b.ships} of the top 100 fly this build` }, document.createTextNode(`${b.name} (${b.ships})`));
+      c.onclick = () => { setPlanBuild(b.p, b.s); runPlanner(); };
+      return c;
+    }));
+  markBuildChip();
+}
+function runPlanner() {
+  const a = Top100.analysis;
+  if (!a || !a.recommend) { $("planStatus").textContent = "Top-100 data is not loaded yet."; return; }
+  if (!GameRooms.count) { $("planStatus").textContent = "The game room list is not loaded yet."; return; }
+  const rows = hullRows();
+  if (!rows.length) { $("planStatus").textContent = "Set a hull first."; return; }
+  const level = planLevel();
+  planResult = Recommender.recommend(a, { rows, level, primary: cfgState.plan.primary, secondary: cfgState.plan.secondary, special: cfgState.plan.special });
+  renderPlan(planResult);
+  $("planStatus").textContent = "";
+}
+function renderPlan(r) {
+  $("planOut").hidden = false;
+  const n = r.rooms.reduce((a, x) => a + x.count, 0);
+  const basis = r.basis ? `Based on ${r.basis} top-100 ship${r.basis > 1 ? "s" : ""} with this build (best rank #${r.ranks[0]})` + (r.basis < 8 ? ", blended with similar builds" : "")
+    : "No top-100 ship flies exactly this build: based on ships with the same main weapon and the whole top 100";
+  $("planSummary").textContent = `${r.build}${r.level != null ? ` for ship level ${r.level}` : " (no ship level: every room allowed)"}: ${n} rooms ` +
+    `(${r.tiles} tiles) + ${r.armor} armor on ${r.hullTiles} hull tiles, about ${r.liftTiles} tiles left for lifts and vents. ${basis}.`;
+  const t = $("planTable");
+  t.replaceChildren(el("tr", {}, el("th", { class: "num", text: "Qty" }), el("th", { text: "Room" }), el("th", { text: "Size" }),
+    el("th", { class: "num", text: "Lv" }), el("th", { class: "num", text: "Power", title: "Power made (+) or drawn at most (-), all rooms of the row" })));
+  r.rooms.forEach((x) => {
+    const c = catOf(x.cat);
+    const pw = x.powerGen ? `+${x.powerGen * x.count}` : x.power ? `-${x.power * x.count}` : "";
+    const tip = `${x.name} Lv ${x.level} [${c.label}]` + (x.minShip != null ? `, needs ship level ${x.minShip}` : "");
+    t.append(el("tr", { title: tip }, el("td", { class: "num", text: String(x.count) }),
+      el("td", { class: "typecell" }, el("i", { style: `background:${c.color}` }), document.createTextNode(x.name + (x.fallback ? " *" : ""))),
+      el("td", { text: `${x.w}x${x.h}` }), el("td", { class: "num", text: String(x.level) }), el("td", { class: "num", text: pw })));
+  });
+  const notes = r.notes.slice();
+  if (GameRooms.hasTiers && r.power.use) notes.unshift(`Power: reactors make ${r.power.make} of the ${r.power.use} the rooms can draw at once ` +
+    `(${Math.round((100 * r.power.make) / r.power.use)}%; top-100 ships make about ${Math.round(100 * r.power.top)}% and power rooms as needed).`);
+  else notes.unshift("Room tiers are not in this site's room list yet, so every room level is allowed (they arrive with the next data refresh).");
+  if (r.rooms.some((x) => x.fallback)) notes.push("* No room top ships use for this type is available at this level; a room of the same type is suggested instead.");
+  if (r.locked.length && r.level != null) {
+    notes.push("Not available yet at level " + r.level + ": " + r.locked.slice(0, 8).map((l) => `${l.name} (level ${l.minShip})`).join(", ") + (r.locked.length > 8 ? ", ..." : "") + ".");
+  }
+  $("planNotes").replaceChildren(...notes.map((x) => el("p", { text: x })));
+}
+function usePlan() {
+  if (!planResult) return;
+  planBefore = { rooms: clone(cfgState.rooms), armor: cfgState.settings.ARMOR_COUNT };
+  cfgState.rooms = planResult.rooms.map((x) => ({ name: x.name, cat: x.cat, w: x.w, h: x.h, count: x.count, armor: "", short: x.short || "", level: x.level }));
+  cfgState.settings.ARMOR_COUNT = planResult.armor;
+  saveSettings(); buildRooms(); buildStructure(); updateStyleNote();
+  $("planUndo").hidden = false;
+  $("planStatus").textContent = `Room list replaced with the ${planResult.build} (${planResult.armor} armor tiles).`;
+}
+
+// ---------------------------------------------------------------- room list tools
+function roomsText() {
+  return cfgState.rooms.map((r) => `${r.count} x ${r.name} [${catOf(r.cat).label}] ${r.w}x${r.h}` + (r.armor ? ` armor ${r.armor}` : "")).join("\n");
+}
+function parseRoomsText(text) {
+  const out = [];
+  for (const line of text.split(/\r?\n/)) {
+    const m = line.match(/^\s*(\d+)\s*x\s+(.+?)\s*\[(.+?)\]\s*(\d+)x(\d+)(?:\s+armor\s+(\d+-\d+))?\s*$/i);
+    if (!m) continue;
+    const cat = ROOM_CATEGORIES.find((c) => c.label.toLowerCase() === m[3].toLowerCase());
+    const g = GameRooms.find(m[2]);
+    out.push({ name: m[2], cat: cat ? cat.id : g ? g.cat : "combat", w: +m[4], h: +m[5], count: +m[1], armor: m[6] || "", short: g ? g.short : "" });
+  }
+  return out;
+}
+$("roomsClear").onclick = () => {
+  if (!cfgState.rooms.length || !confirm("Remove every room from the list?")) return;
+  planBefore = { rooms: clone(cfgState.rooms), armor: cfgState.settings.ARMOR_COUNT };
+  cfgState.rooms = []; saveSettings(); buildRooms();
+  $("planUndo").hidden = false; $("roomsMsg").textContent = "List cleared (Undo in the recommender box brings it back).";
+};
+$("roomsCopy").onclick = async () => {
+  try { await navigator.clipboard.writeText(roomsText()); $("roomsMsg").textContent = "Room list copied."; }
+  catch (e) { prompt("Copy this room list:", roomsText()); }
+};
+$("roomsPaste").onclick = async () => {
+  let text = "";
+  try { text = await navigator.clipboard.readText(); } catch (e) { /* blocked: ask instead */ }
+  if (!parseRoomsText(text).length) text = prompt("Paste a room list (one room per line, as copied from this page):", "") || "";
+  const rooms = parseRoomsText(text);
+  if (!rooms.length) { $("roomsMsg").textContent = "No rooms found in that text."; return; }
+  planBefore = { rooms: clone(cfgState.rooms), armor: cfgState.settings.ARMOR_COUNT };
+  cfgState.rooms = rooms; saveSettings(); buildRooms();
+  $("planUndo").hidden = false; $("roomsMsg").textContent = `${rooms.length} room types pasted.`;
+};
+
 // ---------------------------------------------------------------- wire up
 $("startBtn").onclick = start;
 $("stopBtn").onclick = stop;
-$("resetBtn").onclick = () => { if (confirm("Reset all settings to the defaults?")) { cfgState = clone(DEFAULTS); saveSettings(); buildAll(); buildTopUi(); updateTopNote(); } };
+$("resetBtn").onclick = () => { if (confirm("Reset all settings to the defaults?")) { cfgState = clone(DEFAULTS); saveSettings(); buildAll(); buildTopUi(); buildPlanner(); updateTopNote(); } };
 $("dlJson").onclick = () => download("ship-layout.json", JSON.stringify(layouts[activeIdx], null, 2), "application/json");
 $("dlSvg").onclick = () => download("ship-layout.svg", layoutSvg(layouts[activeIdx]), "image/svg+xml");
 $("copyCoords").onclick = async () => {
@@ -820,18 +1034,27 @@ $("copyCoords").onclick = async () => {
 buildAll();
 buildShipFinder();
 buildTopUi();
+buildPlanner();
 Promise.all([Hulls.load(false).catch(() => null), Top100.load()]).then(() => {
-  const id = parseInt(new URLSearchParams(location.search).get("ship"), 10);   // link from the Top 100 page
+  const params = new URLSearchParams(location.search);
+  const id = parseInt(params.get("ship"), 10);   // link from the Top 100 page
   const ship = isNaN(id) ? null : Hulls.byId(id);
+  const build = (params.get("build") || "").split(/[+ ]/);   // ...&build=missile+hangar: open the recommender for it
   if (ship) {
     hullBefore = cfgState.hull;
     $("hull").value = ship.rows.join("\n");
     $("hull").dispatchEvent(new Event("input"));
     $("hullUndo").hidden = false;
     $("shipStatus").textContent = `Hull set to ${ship.name} from the Top 100 page.`;
-    history.replaceState(null, "", location.pathname);
   }
-  updateTopNote(); updateStyleNote();
+  if (location.search) history.replaceState(null, "", location.pathname);
+  updateTopNote(); updateStyleNote(); updateHullBadge(); buildChips();
+  if (build[0] && Recommender.WEAPONS.some(([k]) => k === build[0])) {
+    setPlanBuild(build[0], build[1] || "");
+    cfgState.plan.level = "auto";
+    $("secRooms").open = true;
+    GameRooms.load().then(() => { runPlanner(); $("planner").scrollIntoView({ block: "start" }); });
+  }
 });
 GameRooms.load().then((n) => {
   if (!n) return;
