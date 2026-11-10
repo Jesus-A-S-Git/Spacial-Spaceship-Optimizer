@@ -10,25 +10,16 @@
   <header>
     <nav class="topnav"><a href="index.html" class="active">Optimizer</a><a href="analyze.html">Top 100 analysis</a></nav>
     <h1>Ship Layout Optimizer</h1>
-    <p>Searches for room, lift, vent and armor layouts on a hull grid. Runs entirely in your browser.</p>
+    <p>Finds where to put rooms, armor, lifts and vents on your ship. Runs entirely in your browser.</p>
     <ol class="steps" id="steps">
-      <li data-step="hull"><button type="button" data-goto="secHull"><b>1</b> Pick your hull</button><span id="stepHull" class="muted"></span></li>
-      <li data-step="rooms"><button type="button" data-goto="secRooms"><b>2</b> Choose rooms</button><span id="stepRooms" class="muted"></span></li>
-      <li data-step="search"><button type="button" data-goto="startBtn"><b>3</b> Start the search</button><span id="stepSearch" class="muted"></span></li>
+      <li data-step="hull"><button type="button" data-tab="hull"><b>1</b> Pick your hull</button><span id="stepHull" class="muted"></span></li>
+      <li data-step="rooms"><button type="button" data-tab="rooms"><b>2</b> Choose rooms</button><span id="stepRooms" class="muted"></span></li>
+      <li data-step="search"><button type="button" data-tab="search"><b>3</b> Start the search</button><span id="stepSearch" class="muted"></span></li>
     </ol>
   </header>
 
   <main>
     <section class="panel results">
-      <details class="howto" id="howto">
-        <summary>How to use this page</summary>
-        <ol>
-          <li><b>Hull:</b> type your ship's name under <i>Find a ship hull</i> and press <i>Use this hull</i>. Its ship level is picked up for the room recommendations.</li>
-          <li><b>Rooms:</b> press <i>Recommend rooms</i> for a weapon setup (for example missiles with hangars), check the list and press <i>Use these rooms</i>. Edit any room afterwards: type a game room's name and its size and type are filled in.</li>
-          <li><b>Search:</b> press <i>Start search</i>. The best layout updates as the search runs; stop whenever you like. Copy the coordinates or download the picture to build it in the game.</li>
-        </ol>
-        <p class="muted">The <a href="analyze.html">Top 100 analysis</a> page shows what the best players build, and opens their hulls and builds here.</p>
-      </details>
       <div class="toolbar">
         <button id="startBtn" class="primary" disabled>Start search</button>
         <button id="stopBtn" disabled>Stop</button>
@@ -38,33 +29,54 @@
       <div id="progressText" class="muted"></div>
       <div id="errorBox" class="error" hidden></div>
 
+      <div id="emptyMsg" class="empty">
+        <h2>Find the best layout for your ship</h2>
+        <p class="muted">Three steps, all in the settings panel. Everything runs in your browser.</p>
+        <ol class="emptysteps">
+          <li><button type="button" class="linkbtn" data-tab="hull">Pick your hull</button>
+            <span>Type your ship's name and press <i>Use this hull</i>. Its ship level decides which rooms you can build.</span></li>
+          <li><button type="button" class="linkbtn" data-tab="rooms">Choose your rooms</button>
+            <span>Pick a weapon setup (e.g. missiles with hangars) and press <i>Recommend rooms</i>, then <i>Use these rooms</i>. You can edit the list afterwards.</span></li>
+          <li><button type="button" class="linkbtn" data-tab="search">Start the search</button>
+            <span>Pick a time and press <i>Start search</i>. The best layout appears here and improves while it runs; copy the coordinates to build it in the game.</span></li>
+        </ol>
+        <p class="muted">Want ideas first? The <a href="analyze.html">Top 100 analysis</a> shows what the best players build and can open their hulls and builds here.</p>
+      </div>
+
       <div id="altTabs" class="tabs" hidden></div>
       <div id="layoutWrap" hidden>
         <div id="layoutSvg"></div>
         <div id="legend" class="legend"></div>
         <div class="toolbar">
-          <button id="dlJson">Download layout (JSON)</button>
+          <button id="copyCoords" class="primary">Copy coordinates</button>
           <button id="dlSvg">Download picture (SVG)</button>
-          <button id="copyCoords">Copy coordinates</button>
+          <button id="dlJson">Download layout (JSON)</button>
         </div>
         <h3>Score <span id="scoreVal"></span></h3>
         <div id="stats" class="stats"></div>
-        <h3>Room coordinates (top-left x, y)</h3>
-        <div class="tablewrap"><table id="inventory"></table></div>
+        <details class="sub" open>
+          <summary>Room coordinates (top-left x, y)</summary>
+          <div class="tablewrap"><table id="inventory"></table></div>
+        </details>
         <div id="oddsBox" class="muted"></div>
       </div>
-      <p id="emptyMsg" class="muted">No layout yet. Adjust the settings and press Start.</p>
     </section>
 
     <aside class="panel settings">
-      <div class="toolbar"><h2>Settings</h2><button id="resetBtn" class="small">Reset to defaults</button></div>
+      <div class="settingshead">
+        <div class="paneltabs" id="paneTabs" role="tablist">
+          <button type="button" role="tab" data-tab="hull">1 Hull</button>
+          <button type="button" role="tab" data-tab="rooms">2 Rooms</button>
+          <button type="button" role="tab" data-tab="search">3 Search</button>
+          <button type="button" role="tab" data-tab="advanced">Advanced</button>
+        </div>
+      </div>
 
-      <details open id="secHull">
-        <summary>Hull <span id="hullBadge" class="badge" hidden></span></summary>
+      <section class="tabpane" data-tab="hull" id="secHull">
+        <h2>Your hull <span id="hullBadge" class="badge" hidden></span></h2>
         <div class="shipfind">
-          <h4>Find a ship hull</h4>
           <div class="toolbar tight">
-            <input type="search" id="shipSearch" placeholder="Type a ship name, e.g. Lv 9 or Federation" autocomplete="off">
+            <input type="search" id="shipSearch" placeholder="Type your ship's name, e.g. Federation" autocomplete="off" aria-label="Ship name">
           </div>
           <div id="shipStatus" class="muted">Start typing to load the ship list.</div>
           <div id="shipResults" class="shiplist" hidden></div>
@@ -73,34 +85,38 @@
             <div id="shipPreviewSvg"></div>
             <div class="toolbar">
               <button id="shipUse" class="primary small">Use this hull</button>
-              <span class="muted">Replaces the hull below. You can undo.</span>
+              <span class="muted">You can undo.</span>
             </div>
           </div>
           <div class="toolbar tight">
-            <button id="shipRefresh" class="small" title="Ask the game server for the newest ship list">Get latest from game</button>
-            <label class="small filebtn" title="A ship list saved from the game API or Pixyship (.json or .xml)">Load file<input type="file" id="shipFile" accept=".json,.xml,.txt" hidden></label>
             <button id="hullUndo" class="small" hidden>Undo hull change</button>
           </div>
         </div>
-        <h4>Hull grid</h4>
-        <p class="muted">One row per line. <code>x</code> = usable tile, <code>r</code> = resource space (only resource rooms go there), <code>.</code> = outside the hull. All rows must be the same length.</p>
-        <textarea id="hull" rows="9" spellcheck="false"></textarea>
         <div id="hullInfo" class="muted"></div>
-      </details>
+        <details class="sub">
+          <summary>Edit the hull grid by hand, or load a ship list</summary>
+          <p class="muted">One row per line. <code>x</code> = usable tile, <code>r</code> = resource space (only resource rooms go there), <code>.</code> = outside the hull. All rows must be the same length.</p>
+          <textarea id="hull" rows="9" spellcheck="false" aria-label="Hull grid"></textarea>
+          <div class="toolbar tight">
+            <button id="shipRefresh" class="small" title="Ask the game server for the newest ship list">Get latest ship list from the game</button>
+            <label class="small filebtn" title="A ship list saved from the game API or Pixyship (.json or .xml)">Load ship list file<input type="file" id="shipFile" accept=".json,.xml,.txt" hidden></label>
+          </div>
+        </details>
+        <div class="nextrow"><button type="button" class="primary small" data-tab="rooms">Next: choose rooms →</button></div>
+      </section>
 
-      <details open id="secRooms">
-        <summary>Rooms</summary>
+      <section class="tabpane" data-tab="rooms" id="secRooms" hidden>
+        <h2>Your rooms</h2>
         <div class="planner" id="planner">
           <h4>Recommend rooms for a build</h4>
-          <p class="muted">Pick a weapon setup. The room list is built from what top-100 ships of that build run, scaled to
-            your hull, and uses only rooms your hull's ship level can build (at the best level it allows).</p>
+          <p class="muted">Rooms that top-100 ships of this build run, scaled to your hull, using only rooms your ship level can build. <a href="analyze.html#builds">Compare builds</a></p>
           <div class="plangrid">
             <label>Main weapon<select id="planPrimary"></select></label>
             <label>Second weapon<select id="planSecondary"></select></label>
             <label>Ship level<select id="planLevel"></select></label>
           </div>
           <div id="planBuilds" class="chips buildchips"></div>
-          <label class="inline"><input type="checkbox" id="planSpecial"> Include event and special rooms (one-level rooms such as decorations and boosters from events)</label>
+          <label class="inline"><input type="checkbox" id="planSpecial"> Include event and premium rooms</label>
           <div class="toolbar tight">
             <button id="planGo" class="primary small">Recommend rooms</button>
             <span id="planStatus" class="muted"></span>
@@ -116,62 +132,73 @@
             </div>
           </div>
         </div>
-        <p class="muted">Name each room, pick its type and set how many. The type decides how it is placed:
-          <b>priority</b> rooms (reactors, shields) get the most armor, <b>combat</b> rooms are armored and linked
-          for crew travel (<b>anti-air</b> is also pulled to the middle of the other combat rooms), <b>non-combat</b> rooms stay away from armor and lifts, <b>resource</b> rooms go on <code>r</code> tiles.
-          Armor = this room's own sweet spot (e.g. <code>4-6</code>); leave empty for the default.</p>
-        <div id="roomLibNote" class="muted"></div>
-        <datalist id="gameRoomNames"></datalist>
+        <h4>Room list</h4>
         <div id="roomSummary" class="roomsummary"></div>
+        <div id="roomList"></div>
+        <details class="sub">
+          <summary>Add a room by type</summary>
+          <div id="roomLibNote" class="muted"></div>
+          <div id="roomAdd" class="addchips"></div>
+          <p class="muted">The type decides how a room is placed: <b>priority</b> rooms (reactors, shields) get the most armor,
+            <b>combat</b> rooms are armored and linked for crew travel, <b>non-combat</b> rooms stay away from armor and lifts,
+            <b>resource</b> rooms go on <code>r</code> tiles. <i>Armor</i> on a room is its own sweet spot (e.g. <code>4-6</code>); empty = the default.</p>
+        </details>
+        <datalist id="gameRoomNames"></datalist>
         <div class="toolbar tight">
           <button id="roomsClear" class="small" title="Remove every room from the list">Clear list</button>
           <button id="roomsCopy" class="small" title="Copy the room list as text">Copy list</button>
           <button id="roomsPaste" class="small" title="Paste a room list copied from this page">Paste list</button>
           <span id="roomsMsg" class="muted"></span>
         </div>
-        <div id="roomList"></div>
-        <h4>Add a room</h4>
-        <div id="roomAdd" class="addchips"></div>
-        <label class="inline"><input type="checkbox" id="resAnywhere"> Resource rooms may also use normal <code>x</code> tiles</label>
-        <label class="inline"><input type="checkbox" id="placeBonus"> Fill leftover space with bonus rooms</label>
-      </details>
+        <div class="nextrow"><button type="button" class="small" data-tab="hull">← Hull</button><button type="button" class="primary small" data-tab="search">Next: search →</button></div>
+      </section>
 
-      <details>
-        <summary>Armor, lifts and vents</summary>
-        <div id="structure" class="grid2"></div>
-        <label class="inline"><input type="checkbox" id="walkNc"> Game-like walking: crew walk through every room; vents move crew sideways and connect to a room only at its bottom row</label>
-        <label class="inline"><input type="checkbox" id="connectAll"> Connect every combat room (add vents and lifts after the search where needed)</label>
-      </details>
-
-      <details>
-        <summary>Scoring weights</summary>
-        <p class="muted">Bigger number = that term matters more. Penalties are subtracted from the score.</p>
-        <div class="toolbar stylebar"><span class="muted">Style:</span>
-          <button id="style_top" class="small">Top-player (armor first)</button>
-          <button id="style_original" class="small">Original (crew reaches every room)</button></div>
-        <div id="styleNote" class="muted"></div>
-        <div id="weights"></div>
-      </details>
-
-      <details open>
-        <summary>Search</summary>
-        <div class="grid2">
-          <label for="quickTime">Time limit (seconds)</label><input type="number" id="quickTime" min="0" step="30">
-        </div>
+      <section class="tabpane" data-tab="search" id="secSearch" hidden>
+        <h2>Search</h2>
+        <h4>How long</h4>
         <div class="toolbar tight timechips" id="timeChips"></div>
-        <details class="sub">
-          <summary>More search options</summary>
-          <div id="search" class="grid2"></div>
-        </details>
-        <p class="muted">Leave restarts at 0 and use the time limit (or press Stop) to keep searching. The search then runs in
-          rounds on every CPU core and shares the best layouts between cores after each round. Results improve with more time.</p>
+        <div class="grid2">
+          <label for="quickTime">Time limit (seconds, 0 = until you press Stop)</label><input type="number" id="quickTime" min="0" step="30">
+        </div>
+        <div class="toolbar"><button type="button" id="startBtn2" class="primary" disabled>Start search</button><span class="muted">Results appear on the left (above on phones).</span></div>
+        <h4>Learn from the top 100</h4>
         <label class="inline"><input type="checkbox" id="useTop"> Start from top-100 layouts on this hull</label>
         <div id="topNote" class="muted"></div>
-        <label class="inline"><input type="checkbox" id="deckStarts"> Also start from deck-structured layouts (decks with an armor row between them, like top ships)</label>
-        <label class="inline"><input type="checkbox" id="learnTop"> Score with patterns learned from the top 100</label>
+        <label class="inline"><input type="checkbox" id="deckStarts"> Also start from deck layouts like top ships (decks with an armor row between them)</label>
+        <label class="inline"><input type="checkbox" id="learnTop"> Score with patterns learned from the top 100 (room neighbours, gates, hull edge)</label>
+        <h4>Earlier searches</h4>
         <label class="inline"><input type="checkbox" id="resume"> Continue from the best layouts of earlier searches</label>
         <div id="resumeNote" class="muted"></div>
-      </details>
+        <div class="nextrow"><button type="button" class="small" data-tab="rooms">← Rooms</button><button type="button" class="small" data-tab="advanced">Advanced settings</button></div>
+      </section>
+
+      <section class="tabpane" data-tab="advanced" id="secAdvanced" hidden>
+        <h2>Advanced</h2>
+        <p class="muted">The defaults work well; change these only to steer the search. <button id="resetBtn" class="small">Reset everything to defaults</button></p>
+        <details class="sub" open>
+          <summary>Armor, lifts and vents</summary>
+          <div id="structure" class="grid2"></div>
+          <label class="inline"><input type="checkbox" id="walkNc"> Game-like walking: crew walk through every room; vents move crew sideways and connect to a room only at its bottom row</label>
+          <label class="inline"><input type="checkbox" id="connectAll"> Connect every combat room (add vents and lifts after the search where needed)</label>
+          <label class="inline"><input type="checkbox" id="resAnywhere"> Resource rooms may also use normal <code>x</code> tiles</label>
+          <label class="inline"><input type="checkbox" id="placeBonus"> Fill leftover space with bonus rooms</label>
+        </details>
+        <details class="sub">
+          <summary>Scoring weights</summary>
+          <p class="muted">Bigger number = that term matters more. Penalties are subtracted from the score.</p>
+          <div class="toolbar stylebar"><span class="muted">Style:</span>
+            <button id="style_top" class="small">Top-player (armor first)</button>
+            <button id="style_original" class="small">Original (crew reaches every room)</button></div>
+          <div id="styleNote" class="muted"></div>
+          <div id="weights"></div>
+        </details>
+        <details class="sub">
+          <summary>Search details</summary>
+          <p class="muted">Leave restarts at 0 and use the time limit (or Stop): the search then runs in rounds on every CPU core
+            and shares the best layouts between cores after each round.</p>
+          <div id="search" class="grid2"></div>
+        </details>
+      </section>
     </aside>
   </main>
 

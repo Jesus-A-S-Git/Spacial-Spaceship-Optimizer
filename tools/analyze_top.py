@@ -565,6 +565,151 @@ def insights(ships):
     return out
 
 
+# ------------------------------------------------------------------ anti-teleport gates
+def gate_kind(name):
+    """'interdictor' / 'security' / 'repulsor' for the anti-teleport rooms the patterns are about, else None.
+    The same rule is in python/web_driver.py (gate_kind)."""
+    n = str(name or "").lower()
+    if "interdictor" in n:
+        return "interdictor"
+    if "security gate" in n:
+        return "security"
+    if "repulsor" in n:
+        return "repulsor"
+    return None
+
+
+GATE_LABELS = {"interdictor": "Teleport Interdictor Gate", "security": "Security Gate", "repulsor": "Teleport Repulsor"}
+
+
+def gate_analysis(ships):
+    """Where top ships put their anti-teleport gates: what touches them (armor, hull edge, lifts, reactors,
+    other gates), what sits left and right (crew walk through rooms sideways), how the two Interdictor
+    Gates are placed, compared with every other combat room. Also the gate patterns the optimizer learns
+    (patterns.gates: log2 of how much more often top ships do it than other combat rooms)."""
+    recs, by_ship = [], defaultdict(list)
+    for s in ships:
+        occ = s.occupancy()
+        armor, lifts, vents = set(s.armor), set(s.lift_cells), set(s.vents)
+
+        def what(t):
+            if t not in s.inside:
+                return "edge"
+            if t in armor:
+                return "armor"
+            if t in lifts:
+                return "lift"
+            if t in vents:
+                return "vent"
+            if t in occ:
+                o = s.rooms[occ[t]]
+                return gate_kind(o["name"]) or o["cat"]
+            return "empty"
+        H = [y for _, y in s.inside]
+        y0, y1 = min(H), max(H)
+        for i, r in enumerate(s.rooms):
+            if r["kind"] not in ("priority", "combat"):
+                continue
+            x, y, w, h = r["x"], r["y"], r["w"], r["h"]
+            L = [(x - 1, yy) for yy in range(y, y + h)]
+            R = [(x + w, yy) for yy in range(y, y + h)]
+            ring = ring_of(x, y, w, h)
+            kinds = Counter(what(t) for t in ring)
+            nb = {occ[t] for t in ring if t in occ and occ[t] != i}
+            side = lambda ts: Counter(what(t) for t in ts)
+            sl, sr = side(L), side(R)
+            lift_side = sl if sl["lift"] else sr if sr["lift"] else None
+            other = (sr if lift_side is sl else sl) if lift_side is not None else None
+            rec = dict(rank=s.lay["rank"], kind=gate_kind(r["name"]), name=r["name"], cat=r["cat"], x=x, y=y, w=w, h=h,
+                       armor=kinds["armor"] / len(ring),
+                       sealed=all(what(t) in ("armor", "edge") for t in ring),
+                       isolated=not nb,
+                       edge=kinds["edge"] > 0, lift=bool(lift_side), any_lift=kinds["lift"] > 0,
+                       reactor=any(s.rooms[o]["cat"] == "reactor" for o in nb),
+                       lift_reactor=bool(other and other["reactor"]),
+                       other_of_lift=(max(other, key=other.get) if other else None),
+                       touches={k for k in (gate_kind(s.rooms[o]["name"]) for o in nb) if k},
+                       same=any(s.rooms[o]["name"] == r["name"] for o in nb),
+                       lr=" | ".join(sorted("/".join(sorted(c)) for c in (sl, sr))),
+                       nb=Counter(s.rooms[o]["cat"] for o in nb),
+                       ypos=(y - y0) / max(1, y1 - y0 + 1 - h))
+            recs.append(rec)
+            if rec["kind"]:
+                by_ship[s.lay["rank"]].append(rec)
+    base = [r for r in recs if not r["kind"]]
+    share = lambda rs, f: (sum(1 for r in rs if f(r)) / len(rs)) if rs else 0.0
+
+    def stats(rs):
+        n = len(rs)
+        nb = Counter()
+        for r in rs:
+            nb.update(set(r["nb"]))
+        return dict(rooms=n, ships=len({r["rank"] for r in rs}),
+                    armor=round(statistics.mean(r["armor"] for r in rs), 3) if rs else 0,
+                    sealed=round(share(rs, lambda r: r["sealed"]), 3), isolated=round(share(rs, lambda r: r["isolated"]), 3),
+                    edge=round(share(rs, lambda r: r["edge"]), 3), lift=round(share(rs, lambda r: r["lift"]), 3),
+                    reactor=round(share(rs, lambda r: r["reactor"]), 3),
+                    lift_reactor=round(share(rs, lambda r: r["lift_reactor"]), 3),
+                    interdictor=round(share(rs, lambda r: "interdictor" in r["touches"]), 3),
+                    security=round(share(rs, lambda r: "security" in r["touches"]), 3),
+                    same=round(share(rs, lambda r: r["same"]), 3),
+                    neighbours=[[c, round(k / n, 3)] for c, k in nb.most_common(8)] if n else [])
+    out = dict(types={}, baseline=stats(base))
+    for k in GATE_LABELS:
+        rs = [r for r in recs if r["kind"] == k]
+        if not rs:
+            continue
+        st = stats(rs)
+        st["label"] = GATE_LABELS[k]
+        st["per_ship"] = Counter(len([r for r in v if r["kind"] == k]) for v in by_ship.values() if any(r["kind"] == k for r in v)).most_common(4)
+        st["left_right"] = [[m, round(c / len(rs), 3)] for m, c in Counter(r["lr"] for r in rs).most_common(6)]
+        lifted = [r for r in rs if r["lift"]]
+        st["lift_other_side"] = [[m, round(c / len(lifted), 3)] for m, c in Counter(r["other_of_lift"] for r in lifted).most_common(5)] if lifted else []
+        out["types"][k] = st
+    # how ships with two Interdictor Gates place them
+    pair = Counter()
+    for v in by_ship.values():
+        t = sorted((r for r in v if r["kind"] == "interdictor"), key=lambda r: (r["y"], r["x"]))
+        if len(t) != 2:
+            continue
+        a, b = t
+        if a["y"] == b["y"] and abs(a["x"] - b["x"]) == a["w"]:
+            pair["side by side (one 2x2 block)"] += 1
+        elif a["x"] == b["x"] and abs(a["y"] - b["y"]) == a["h"]:
+            pair["stacked"] += 1
+        elif a["y"] == b["y"]:
+            pair["same deck, apart"] += 1
+        else:
+            pair["different decks"] += 1
+    out["interdictor_pairs"] = pair.most_common()
+    # builds with boarding carry more gates
+    boarding = {s.lay["rank"] for s in ships if ship_profile(s)[0].get("boarding", 0) >= 2}
+    def per(group, k):
+        return round(sum(1 for v in by_ship.items() if v[0] in group for r in v[1] if r["kind"] == k) / max(1, len(group)), 2)
+    allr = {s.lay["rank"] for s in ships}
+    out["boarding"] = {"ships": len(boarding), **{k: per(boarding, k) for k in GATE_LABELS}}
+    out["other"] = {"ships": len(allr - boarding), **{k: per(allr - boarding, k) for k in GATE_LABELS}}
+    top10 = {s.lay["rank"] for s in ships if s.lay["rank"] <= 10}
+    out["top10"] = {"ships": len(top10), **{k: per(top10, k) for k in GATE_LABELS}}
+
+    # learned patterns for the optimizer (section 16: GATE_PATTERNS): how much more often than other combat rooms
+    def lift_ratio(a, b, floor=0.03):
+        return round(max(0.0, min(2.0, math.log2((a + 0.01) / max(b, floor)))), 3)
+    T, B = out["types"], out["baseline"]
+    pats = {}
+    if "security" in T:
+        sg = T["security"]
+        pats["security_lift"] = lift_ratio(sg["lift"], B["lift"])
+        pats["security_lift_reactor"] = lift_ratio(sg["lift_reactor"], B["lift_reactor"])
+        pats["security_reactor"] = lift_ratio(sg["reactor"], B["reactor"])
+    if "interdictor" in T:
+        ti = T["interdictor"]
+        pats["interdictor_pair"] = lift_ratio(ti["same"], B["same"])
+        pats["interdictor_security"] = lift_ratio(ti["security"], B["security"])
+    out["patterns"] = {k: v for k, v in pats.items() if v > 0.25}
+    return out
+
+
 # ------------------------------------------------------------------ calibration
 FEATURES = [  # (weight, feature from finalize info; score = sum(weight * feature) + extras)
     ("W_ARMOR", lambda i, s: i["arm_sum"]),
@@ -777,6 +922,8 @@ def main():
     result["builds"] = builds(ships)
     result["recommend"] = recommendations(ships)
     result["insights"] = insights(ships)
+    result["gates"] = gate_analysis(ships)
+    result["patterns"]["gates"] = result["gates"]["patterns"]
     result["levels"] = dict(Counter(l.get("ship_level") for l in lays if l.get("ship_level") is not None))
     result["updated"] = updated
     m0 = web_driver.build_module(dict(hull=["x" * 12] * 12, rooms=[], settings={"ARMOR_COUNT": 4}), os.path.join(ROOT, "python", "ship_layout_finder.py"))

@@ -53,6 +53,8 @@ Score = weighted armor touchpoints (Shield + Reactors count PRIORITY_WEIGHT time
         - W_CENTER * distance of each CENTER room (e.g. anti-air) from the middle of the other combat rooms
         + W_PATTERN * room patterns learned from top ships (which room types sit next to each other,
                       which sit on the hull edge; see section 10 and tools/analyze_top.py)
+        + W_GATE   * anti-teleport gates placed like top ships (Security Gates at lift exits by reactors,
+                     Interdictor Gates together; section 16)
   With --top50 layouts.json (lessons learned from the top-50 ladder ships, see section 8 of the config):
         + W_SHELL  * hull-edge contact, weighted per room kind by how top ships use the edge
                      (non-combat rooms form the outer shell, combat rooms stay inside)
@@ -242,6 +244,17 @@ W_PATTERN = 0.0                    # strength of the learned patterns
 #     Booster by any combat room. W_BOOST is earned for every boosted room touching a booster.
 ROOM_BOOSTS = []
 W_BOOST = 0.0
+
+# 16) ANTI-TELEPORT GATES placed like top ships (tools/analyze_top.py measures it on the top-100 ladder):
+#     Security Gates stand at lift exits, usually with a reactor on the other side (lift | gate | reactor),
+#     and the two Teleport Interdictor Gates sit together (side by side, a 2x2 block), often next to a
+#     Security Gate. ROOM_GATES gives, per room (same order as ROOM_TAGS), "interdictor", "security" or ""
+#     ([] = no gates). GATE_PATTERNS holds the reward per gate for each habit (log2 of how much more often
+#     top ships do it than other combat rooms); W_GATE scales them all. W_GATE = 0 switches it off.
+ROOM_GATES = []
+GATE_PATTERNS = {}                 # {"security_lift": 1.8, "security_lift_reactor": 2.0, "security_reactor": 0.8,
+                                   #  "interdictor_pair": 2.0, "interdictor_security": 2.0}
+W_GATE = 0.0
 
 # 11) Walking through non-combat rooms. In the game crew walk along the floor of EVERY room; this
 #     optimizer's original model only lets them use combat-room floors. True = game-like walking:
@@ -1002,6 +1015,42 @@ def boost_count(pos, tiles):
     return n
 
 
+def gate_score(pos, tiles, lifts):
+    """Gate habits of top ships (section 16): Security Gate with a lift on its left or right (and then a
+    reactor on the other side), or else touching a reactor; Interdictor Gates touching each other and
+    touching a Security Gate."""
+    if not (W_GATE and GATE_PATTERNS and len(ROOM_GATES) == NR):
+        return 0.0
+    P = GATE_PATTERNS
+    tags = _TAGS
+    is_reactor = lambda o: o is not None and tags[o] in ("reactor", "priority")
+    tot = 0.0
+    for r, g in enumerate(ROOM_GATES):
+        if not g:
+            continue
+        x, y = pos[r]
+        w, h = ROOMS[r][2], ROOMS[r][3]
+        if g == "security":
+            left = [(x - 1, yy) for yy in range(y, y + h)]
+            right = [(x + w, yy) for yy in range(y, y + h)]
+            lift_l, lift_r = any(t in lifts for t in left), any(t in lifts for t in right)
+            if lift_l or lift_r:
+                tot += P.get("security_lift", 0.0)
+                other = right if lift_l else left
+                if any(is_reactor(tiles.get(t)) for t in other):
+                    tot += P.get("security_lift_reactor", 0.0)
+            elif any(is_reactor(tiles.get(t)) for t in ring_of(x, y, w, h)):
+                tot += P.get("security_reactor", 0.0)
+        elif g == "interdictor":
+            near = {tiles.get(t) for t in ring_of(x, y, w, h)}
+            kinds = {ROOM_GATES[o] for o in near if o is not None and o != r}
+            if "interdictor" in kinds:
+                tot += P.get("interdictor_pair", 0.0)
+            if "security" in kinds:
+                tot += P.get("interdictor_security", 0.0)
+    return tot
+
+
 def pattern_score(pos, tiles):
     """Learned top-ship patterns: touching room types (TAG_ADJ) plus edge-facing share by type (TAG_EDGE)."""
     if not (TAG_ADJ or TAG_EDGE):
@@ -1047,7 +1096,8 @@ def cheap_score(state):
          - W_DISC * unreach - W_LIFT * lift_penalty(state, tiles) - W_ISO * iso
          - W_VENT * vent_penalty(vl, lifts) - W_CORNER * 0.5 * (cmax + cavg)
          + W_SPREAD * priority_spread(pos) - W_CENTER * center_distance(pos)
-         + (W_PATTERN * pattern_score(pos, tiles) if W_PATTERN else 0.0))
+         + (W_PATTERN * pattern_score(pos, tiles) if W_PATTERN else 0.0)
+         + (W_GATE * gate_score(pos, tiles, lifts) if W_GATE else 0.0))
     s -= 60 * max(0, ARMOR_COUNT - ncand)
     return s
 
@@ -1924,6 +1974,7 @@ def finalize(state):
     center_dist = center_distance(pos)
     pattern = pattern_score(pos, tiles) if W_PATTERN else 0.0
     boosted = boost_count(pos, tiles)
+    gate = gate_score(pos, tiles, lifts) if W_GATE else 0.0
     # Top-50 lessons: outer shell of non-combat rooms, non-combat rooms grouped, lifts spaced like top ships
     shell = 0.0
     nc_alone = 0
@@ -1954,6 +2005,7 @@ def finalize(state):
              - W_CENTER * center_dist
              + W_PATTERN * pattern
              + W_BOOST * boosted
+             + W_GATE * gate
              # top-50 style points only count once every combat room is reachable, so they never pull
              # the search toward a layout with a cut-off room
              + (W_SHELL * shell - W_NC_CLUSTER * nc_alone - W_LIFT_DENSITY * lift_density_pen if unreach == 0 else 0.0))
@@ -1967,7 +2019,7 @@ def finalize(state):
                 shell=shell, nc_alone=nc_alone, lift_density_pen=lift_density_pen,
                 edge_tiles=dict(edge_tiles), ring_tiles=dict(ring_tiles),
                 center_dist=center_dist, center_point=combat_center(pos), pattern=pattern,
-                boosted=boosted)
+                boosted=boosted, gate=gate)
     return score, g, info
 
 
@@ -2651,7 +2703,8 @@ def swap_polish(st, res, deadline=None, passes=3):
             for i in range(len(rooms)):
                 for j in range(i + 1, len(rooms)):
                     a, b = rooms[i], rooms[j]
-                    if tags[a] == tags[b] and ROOM_KIND[a] == ROOM_KIND[b] and ROOM_BOOSTS[a:a + 1] == ROOM_BOOSTS[b:b + 1]:
+                    if (tags[a] == tags[b] and ROOM_KIND[a] == ROOM_KIND[b] and ROOM_BOOSTS[a:a + 1] == ROOM_BOOSTS[b:b + 1]
+                            and ROOM_GATES[a:a + 1] == ROOM_GATES[b:b + 1]):
                         continue                       # identical rooms: a swap changes nothing
                     if deadline and time.time() > deadline:
                         return cur, best

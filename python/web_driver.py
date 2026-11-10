@@ -24,7 +24,7 @@ INT_KEYS = {"ARMOR_COUNT", "MAX_EMPTY_RUN", "LIFT_COST", "VENT_COUNT", "VENT_LIN
 FLOAT_KEYS = {"PRIORITY_WEIGHT", "W_ARMOR", "W_UNARMORED", "W_PRIORITY_UNARMORED", "W_FLOAT",
               "W_TRAVEL", "W_CORNER", "W_DISC", "CORNER_UNREACHABLE", "W_LIFT", "W_LTOUCH",
               "W_LIFT_BALANCE", "W_LIFT_COUNT", "W_GAP", "W_EMPTY", "W_RUN", "W_ISO", "W_SPREAD",
-              "SPREAD_CAP", "W_VENT", "W_ARMOR_UNDER", "PRIORITY_UNDER_MULT", "W_ARMOR_OVER", "W_SIDE", "W_CENTER", "W_PATTERN", "W_SHELL", "W_NC_CLUSTER", "W_LIFT_DENSITY", "W_BOOST"}
+              "SPREAD_CAP", "W_VENT", "W_ARMOR_UNDER", "PRIORITY_UNDER_MULT", "W_ARMOR_OVER", "W_SIDE", "W_CENTER", "W_PATTERN", "W_SHELL", "W_NC_CLUSTER", "W_LIFT_DENSITY", "W_BOOST", "W_GATE"}
 # What each booster boosts (measured on the top-100 ships); unknown boosters boost any combat room.
 COMBAT_TAGS = ["reactor", "shield", "priority", "laser", "antiair", "missile", "hangar", "antimissile", "antitele",
                "boarding", "crewsupport", "cloak", "shieldsupport", "command", "utility", "combat"]
@@ -107,6 +107,9 @@ def build_injection(cfg):
             boosts.append(next((t for n, t in BOOST_TARGETS.items() if n in key), COMBAT_TAGS))
         if any(boosts):
             lines.append(f"ROOM_BOOSTS = {boosts!r}")
+        gates = [gate_kind(md["name"]) if md["cat"] == "antitele" else "" for md in meta]
+        if any(gates):
+            lines.append(f"ROOM_GATES = {gates!r}")
     priors = cfg.get("top50_priors")
     if priors and isinstance(priors, dict) and "edge_pref" in priors:
         # the optimizer reads its top-50 numbers from a file at import time: hand them over as one
@@ -119,7 +122,20 @@ def build_injection(cfg):
     edge = {str(k): float(v) for k, v in (pat.get("edge") or {}).items()}
     lines.append(f"TAG_ADJ = {adj!r}")
     lines.append(f"TAG_EDGE = {edge!r}")
+    gp = {str(k): float(v) for k, v in (pat.get("gates") or {}).items()}
+    lines.append(f"GATE_PATTERNS = {gp!r}")
     return "\n".join(lines), meta
+
+
+def gate_kind(name):
+    """Anti-teleport room -> 'interdictor' / 'security' (gate patterns, optimizer section 16), else ''.
+    Same rule as tools/analyze_top.py gate_kind."""
+    n = str(name or "").lower()
+    if "interdictor" in n:
+        return "interdictor"
+    if "security gate" in n:
+        return "security"
+    return ""
 
 
 KINDS = ("priority", "combat", "noncombat", "resource")
@@ -243,7 +259,7 @@ def layout_json(m, res):
         priority_spread=info["spread"], vents=len(st["vents"]), vents_unlinked=info["vent_pen"],
         armor_touching_no_room=info["floating"], combat_rooms_without_armor=info["unarmored_rooms"],
         priority_rooms_without_armor=info["unarmored_priority"],
-        pattern=info.get("pattern", 0.0), boosted_rooms=info.get("boosted", 0),
+        pattern=info.get("pattern", 0.0), boosted_rooms=info.get("boosted", 0), gate_score=info.get("gate", 0.0),
         sweet_spot_shortfall=info["range_under"], sweet_spot_excess=info["range_over"],
         center_rooms=len(getattr(m, "CENTER_IDX", ())), center_distance=info.get("center_dist", 0.0),
     )

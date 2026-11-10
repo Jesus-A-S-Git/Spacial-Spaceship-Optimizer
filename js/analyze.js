@@ -375,6 +375,73 @@ function powerSection(a) {
   return true;
 }
 
+
+// ---------------------------------------------------------------- gates
+const GATE_NB = { interdictor: "Interdictor Gate", security: "Security Gate", repulsor: "Teleport Repulsor", edge: "Hull edge", armor: "Armor", lift: "Lift", vent: "Vent", empty: "Empty" };
+const nbLabel = (k) => GATE_NB[k] || (CAT[k] ? CAT[k].label : k);
+function gatesSection(a) {
+  const g = a.gates;
+  if (!g || !Object.keys(g.types).length) return false;
+  const T = g.types, B = g.baseline, keys = Object.keys(T);
+  const sg = T.security, ti = T.interdictor;
+  const take = [];
+  if (sg) {
+    const o = sg.lift_other_side[0];
+    take.push(`Security Gates stand at lift exits: ${pct(sg.lift)} have a lift on their left or right, against ${pct(B.lift)} of other combat rooms.` +
+      (o ? ` Across from the lift is most often a ${nbLabel(o[0]).toLowerCase()} (${pct(o[1])}); ${pct(sg.reactor)} touch a reactor.` : ""));
+  }
+  if (ti) {
+    const p = g.interdictor_pairs, n = p.reduce((x, [, c]) => x + c, 0), top = p[0];
+    take.push(`Interdictor Gates come in twos (${ti.per_ship.map(([k, c]) => `${c} ships with ${k}`).join(", ")}); ` +
+      (top && n ? `${pct(top[1] / n)} of ships with two put them ${top[0]}. ` : "") +
+      `${pct(ti.same)} touch the other one and ${pct(ti.security)} touch a Security Gate.`);
+    take.push(`Gates are not sealed in armor: ${pct(ti.sealed)} of Interdictor Gates are closed off by armor and hull edge, and gates get ` +
+      `less armor than other combat rooms (${pct(ti.armor)} / ${pct(sg ? sg.armor : 0)} of their outline against ${pct(B.armor)}).`);
+  }
+  if (g.boarding) take.push(`Ships with 2+ teleport rooms run ${fmt(g.boarding.security, 1)} Security Gates each, others ${fmt(g.other.security, 1)}.`);
+  $("gateTake").replaceChildren(el("ul", {}, ...take.map((t) => el("li", { text: t }))));
+  const rows = [
+    ["Ships using it", (v) => (v.ships != null && v !== B ? String(v.ships) : "-")],
+    ["Armor share of the outline", (v) => pct(v.armor)],
+    ["Sealed in by armor / hull edge", (v) => pct(v.sealed)],
+    ["Touching no room", (v) => pct(v.isolated)],
+    ["On the hull edge", (v) => pct(v.edge)],
+    ["Lift on its left or right", (v) => pct(v.lift)],
+    ["...and a reactor on the other side", (v) => pct(v.lift_reactor)],
+    ["Touching a reactor", (v) => pct(v.reactor)],
+    ["Touching an Interdictor Gate", (v) => pct(v.interdictor)],
+    ["Touching a Security Gate", (v) => pct(v.security)],
+  ];
+  const t = $("gateTable");
+  t.replaceChildren(el("tr", {}, el("th", { text: "Share of rooms" }), ...keys.map((k) => el("th", { class: "num", text: `${T[k].label} (${T[k].rooms})` })),
+    el("th", { class: "num", text: `Other combat rooms (${B.rooms})` })));
+  rows.forEach(([label, f]) => t.append(el("tr", {}, el("td", { text: label }), ...keys.map((k) => el("td", { class: "num", text: f(T[k]) })),
+    el("td", { class: "num muted", text: f(B) }))));
+  t.append(el("tr", {}, el("td", { text: "Most common neighbours" }), ...keys.map((k) => el("td", { class: "buildcell",
+    text: T[k].neighbours.slice(0, 4).map(([c, v]) => `${nbLabel(c)} ${pct(v)}`).join(", ") })), el("td", { class: "buildcell muted",
+    text: B.neighbours.slice(0, 4).map(([c, v]) => `${nbLabel(c)} ${pct(v)}`).join(", ") })));
+  const bars = (box, list) => {
+    const rs = list.map(([k, v]) => ({ label: nbLabel(k), color: CAT[k] ? CAT[k].color : null, q: [v, v, v].map((x) => x * 100) }));
+    hbars($(box), rs, Math.max(1, ...rs.map((r) => r.q[1])), "%");
+    $(box).querySelectorAll(".val").forEach((x) => { x.textContent = Math.round(parseFloat(x.textContent)) + "%"; });
+    $(box).querySelectorAll(".iqr").forEach((x) => x.remove());
+  };
+  if (sg) bars("gateLiftOther", sg.lift_other_side);
+  const pn = g.interdictor_pairs.reduce((x, [, c]) => x + c, 0);
+  bars("gatePairs", g.interdictor_pairs.map(([k, c]) => [k, c / pn]));
+  const ct = $("gateCounts");
+  ct.replaceChildren(el("tr", {}, el("th", { text: "Ships" }), ...keys.map((k) => el("th", { class: "num", text: T[k].label + "s" }))));
+  [["Top 10", g.top10], ["2+ teleport rooms (boarding)", g.boarding], ["Other ships", g.other]].forEach(([n, v]) =>
+    ct.append(el("tr", {}, el("td", { text: `${n} (${v.ships})` }), ...keys.map((k) => el("td", { class: "num", text: fmt(v[k], 1) })))));
+  const L = { security_lift: "Security Gate with a lift on its left or right", security_lift_reactor: "...and a reactor on the other side",
+    security_reactor: "Security Gate touching a reactor (no lift)", interdictor_pair: "Interdictor Gates touching each other", interdictor_security: "Interdictor Gate touching a Security Gate" };
+  const lp = (a.patterns && a.patterns.gates) || {};
+  $("gateLearn").replaceChildren(el("p", { text: "With Search > Score with patterns learned from the top 100, the optimizer rewards each gate for these habits " +
+    "(reward = log2 of how much more often top ships do it than with other combat rooms, times Scoring weights > Anti-teleport gates):" }),
+    el("ul", {}, ...Object.entries(lp).map(([k, v]) => el("li", { text: `${L[k] || k}: ${fmt(v, 2)}` }))));
+  return true;
+}
+
 // ---------------------------------------------------------------- gallery
 function drawShip(l) {
   const ship = Hulls.byId(l.ship_id);
@@ -443,7 +510,7 @@ Promise.all([Top100.load(), Hulls.load(false).catch(() => null)]).then(() => {
   }
   $("loadMsg").hidden = true;
   $("subtitle").textContent = `How the top ${a.ships} ladder players build their ships (data from ${(a.updated || "").slice(0, 10)}), and what the optimizer learns from them.`;
-  tiles(a); show("secOverview"); show("jump");
+  tiles(a); show("secOverview");
   if (tiersSection(a)) show("secTiers");
   if (explorer(a)) show("secExplorer");
   hullTable(a); show("secHulls");
@@ -454,6 +521,37 @@ Promise.all([Top100.load(), Hulls.load(false).catch(() => null)]).then(() => {
   edgeBars(a); show("secEdge");
   adjTable(a); show("secAdj");
   if (powerSection(a)) show("secPower");
+  if (gatesSection(a)) show("secGates");
   armor(a); show("secArmor");
   benchmark(a); show("secCalib");
+  setupTabs();
 });
+
+// ---------------------------------------------------------------- tabs (Overview / Builds / Ships & layouts / Room placement / Optimizer check)
+// The address keeps the tab (#builds) or a section (#secGates opens its tab and scrolls to it).
+function setupTabs() {
+  const panes = [...document.querySelectorAll(".tabpane")];
+  panes.forEach((p) => {
+    const secs = [...p.querySelectorAll("section.panel")].filter((x) => !x.hidden && x.querySelector("h2"));
+    if (secs.length > 2) {
+      p.querySelector(".tabintro").after(el("nav", { class: "inpage" }, ...secs.map((x) =>
+        el("a", { href: "#" + x.id, text: x.querySelector("h2").textContent }))));
+    }
+  });
+  $("pageTabs").hidden = false;
+  const open = (hash, scroll) => {
+    const id = (hash || "").replace(/^#/, "");
+    const sec = id && document.getElementById(id);
+    const pane = sec && sec.classList.contains("tabpane") ? sec : sec ? sec.closest(".tabpane") : null;
+    const name = (pane || panes[0]).dataset.tab;
+    panes.forEach((p) => { p.hidden = p.dataset.tab !== name; });
+    document.querySelectorAll("#pageTabs a").forEach((x) => x.classList.toggle("active", x.dataset.tab === name));
+    if (sec && !sec.classList.contains("tabpane") && scroll) sec.scrollIntoView({ block: "start" });
+    else if (scroll) window.scrollTo(0, 0);
+  };
+  document.querySelectorAll("#pageTabs a").forEach((x) => { x.href = "#" + x.dataset.tab; });
+  // tab ids for the panes so #builds works
+  panes.forEach((p) => { if (!p.id) p.id = p.dataset.tab; });
+  window.addEventListener("hashchange", () => open(location.hash, true));
+  open(location.hash, !!location.hash);
+}

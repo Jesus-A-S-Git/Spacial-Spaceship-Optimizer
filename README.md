@@ -48,11 +48,19 @@ The optional `--top50` and `--learn` (numpy) modes of the optimizer are command-
 
 ## Using the page
 
-The steps bar at the top shows where you are: **1 Pick your hull** (type the ship's name under *Find a ship hull*),
-**2 Choose rooms** (use the recommender below, or edit the list by hand) and **3 Start the search**. *How to use this
-page* above the results explains each step. Pick a search time with the time buttons (1 min ... until you stop it); the
-other search settings, armor/lift/vent settings and scoring weights are folded away under their headings.
+**Optimizer page.** The settings panel follows three steps, shown as tabs and in the steps bar at the top:
+**1 Hull** (type the ship's name and press *Use this hull*; editing the grid by hand is folded away),
+**2 Rooms** (the room recommender, then your room list; *Add a room by type* is folded away) and
+**3 Search** (time buttons, a *Start search* button and the top-100 options). Each tab has a *Next* button.
+**Advanced** holds armor/lift/vent settings, scoring weights and search details. Before the first search the results
+area shows a short getting-started guide; afterwards it shows the layout, with *Copy coordinates* first.
 The room list can be cleared, copied as text and pasted back (for example to keep several builds).
+
+**Top 100 page.** Five tabs: **Overview** (key numbers, top 10 vs the rest, trophies), **Builds** (build explorer,
+offense/defense builds, power), **Ships & layouts** (hulls and the layout gallery), **Room placement** (rooms per ship,
+gates, hull edge, neighbours, armor and lifts) and **Optimizer check** (benchmark). Each tab starts with one line on
+what it shows; long tabs have quick links to their sections. Links can point at a tab (`analyze.html#builds`) or a
+section (`analyze.html#secGates`).
 
 ## Room recommender (rooms for a build)
 
