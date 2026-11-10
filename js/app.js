@@ -553,6 +553,7 @@ function preflight() {
   if (!rows.length) return "Set a hull first (Hull tab).";
   const active = cfgState.rooms.filter((r) => (r.count || 0) > 0);
   if (!active.length) return "Add at least one room before starting (Rooms tab, or use Recommend rooms).";
+  if (active.every((r) => catOf(r.cat).kind === "resource")) return "Add at least one non-resource room (weapons, shields, engines...). The search needs a normal room to build around.";
   const H = rows.length, W = rows[0] ? rows[0].length : 0;
   const hasR = rows.some((r) => r.includes("r"));
   const roomTiles = active.reduce((a, r) => a + r.count * r.w * r.h, 0);
@@ -583,7 +584,7 @@ function preflight() {
       const kind = catOf(r.cat).kind;
       return `"${r.name || catOf(r.cat).label}" (${r.w}x${r.h}) does not fit anywhere on this hull` +
         (kind === "resource" && hasR && !cfgState.resource_anywhere ? " (resource rooms need a free block of resource space, r tiles)" : hasR ? " (only resource rooms may use r tiles)" : "") +
-        ". Make it smaller, remove it, or pick a bigger hull.";
+        ". Rooms are never rotated. Make it smaller, remove it, or pick a bigger hull.";
     }
   }
   return null;
@@ -815,7 +816,7 @@ function renderTabs() {
   box.innerHTML = "";
   // alternatives far below the best are noise (scores can be very negative on big hulls): hide them from the tabs
   const best = layouts.length ? layouts[0].score : 0;
-  const gap = Math.max(150, 0.25 * Math.abs(best));
+  const gap = Math.max(150, 0.6 * Math.abs(best));
   const shown = layouts.map((l, i) => i).filter((i) => i === 0 || layouts[i].score >= best - gap);
   if (!shown.includes(activeIdx)) activeIdx = 0;
   box.hidden = shown.length < 2;
