@@ -255,7 +255,7 @@ function buildShipFinder() {
     t.value = shipPicked.rows.join("\n");
     t.dispatchEvent(new Event("input"));
     $("hullUndo").hidden = false;
-    $("shipStatus").textContent = `Hull set to ${shipPicked.name}. Change some x to r below to mark resource space.`;
+    $("shipStatus").textContent = `Hull set to ${shipPicked.name}. Next: choose your rooms.`;
   };
   $("hullUndo").onclick = () => {
     if (hullBefore == null) return;
@@ -893,15 +893,28 @@ function updateSteps() {
   const done = { hull: !!tiles, rooms: n > 0 && used <= tiles, search: found.length > 0 };
   document.querySelectorAll("#steps li").forEach((li) => li.classList.toggle("done", !!done[li.dataset.step]));
 }
-document.querySelectorAll("#steps [data-goto]").forEach((b) => {
-  b.onclick = () => {
-    const t = $(b.dataset.goto);
-    if (!t) return;
-    if (t.tagName === "DETAILS") t.open = true;
-    t.scrollIntoView({ behavior: "smooth", block: "start" });
-    if (t.tagName === "BUTTON" && !t.disabled) t.focus();
-  };
+// settings tabs (Hull / Rooms / Search / Advanced): the steps bar, the empty-results guide and the "Next" buttons switch them
+const TAB_KEY = "shipOptimizerTab.v1";
+function showTab(name, scroll) {
+  const panes = document.querySelectorAll(".tabpane");
+  if (![...panes].some((p) => p.dataset.tab === name)) name = "hull";
+  panes.forEach((p) => { p.hidden = p.dataset.tab !== name; });
+  document.querySelectorAll("#paneTabs [data-tab]").forEach((b) => {
+    b.classList.toggle("active", b.dataset.tab === name);
+    b.setAttribute("aria-selected", String(b.dataset.tab === name));
+  });
+  document.querySelectorAll("#steps li").forEach((li) => li.classList.toggle("current", li.dataset.step === name));
+  try { localStorage.setItem(TAB_KEY, name); } catch (e) { /* ignore */ }
+  const aside = document.querySelector("aside.settings");
+  aside.scrollTop = 0;
+  if (scroll) aside.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+document.querySelectorAll("[data-tab]:not(.tabpane)").forEach((b) => {
+  b.addEventListener("click", () => showTab(b.dataset.tab, !b.closest("aside")));
 });
+// the Search tab's own Start button mirrors the main one
+new MutationObserver(() => { $("startBtn2").disabled = $("startBtn").disabled; }).observe($("startBtn"), { attributes: true, attributeFilter: ["disabled"] });
+$("startBtn2").onclick = () => { $("startBtn").click(); document.querySelector("section.results").scrollIntoView({ behavior: "smooth", block: "start" }); };
 
 // ---------------------------------------------------------------- room recommendations (js/recommend.js)
 let planResult = null, planBefore = null;
@@ -1071,6 +1084,7 @@ buildAll();
 buildShipFinder();
 buildTopUi();
 buildPlanner();
+showTab((() => { try { return localStorage.getItem(TAB_KEY) || "hull"; } catch (e) { return "hull"; } })());
 Promise.all([Hulls.load(false).catch(() => null), Top100.load()]).then(() => {
   const params = new URLSearchParams(location.search);
   const id = parseInt(params.get("ship"), 10);   // link from the Top 100 page
@@ -1088,7 +1102,7 @@ Promise.all([Hulls.load(false).catch(() => null), Top100.load()]).then(() => {
   if (build[0] && Recommender.WEAPONS.some(([k]) => k === build[0])) {
     setPlanBuild(build[0], build[1] || "");
     cfgState.plan.level = "auto";
-    $("secRooms").open = true;
+    showTab("rooms");
     GameRooms.load().then(() => { runPlanner(); $("planner").scrollIntoView({ block: "start" }); });
   }
 });

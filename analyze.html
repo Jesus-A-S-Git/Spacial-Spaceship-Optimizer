@@ -16,18 +16,18 @@
 
   <main class="single">
     <div id="loadMsg" class="panel muted">Loading top-100 data...</div>
-
+    <nav class="pagetabs" id="pageTabs" hidden role="tablist">
+      <a href="#overview" role="tab" data-tab="overview">Overview</a>
+      <a href="#builds" role="tab" data-tab="builds">Builds</a>
+      <a href="#ships" role="tab" data-tab="ships">Ships & layouts</a>
+      <a href="#placement" role="tab" data-tab="placement">Room placement</a>
+      <a href="#optimizer" role="tab" data-tab="optimizer">Optimizer check</a>
+    </nav>
+    <div class="tabpane" data-tab="overview" hidden>
+      <p class="tabintro">The big picture: what the top 100 have in common and what sets the top 10 apart.</p>
     <section class="panel" id="secOverview" hidden>
       <div id="tiles" class="tiles"></div>
     </section>
-
-    <nav class="panel jump" id="jump" hidden>
-      <a href="#secTiers">Top 10 vs the rest</a><a href="#secExplorer">Build explorer</a><a href="#secBuilds">Builds</a>
-      <a href="#secHulls">Hulls</a><a href="#secGallery">Layouts</a><a href="#secRooms">Rooms per ship</a>
-      <a href="#secTrophy">What goes with trophies</a><a href="#secEdge">Hull edge</a><a href="#secAdj">Neighbours</a>
-      <a href="#secPower">Power</a><a href="#secGates">Gates</a><a href="#secArmor">Armor and lifts</a><a href="#secCalib">Optimizer benchmark</a>
-    </nav>
-
     <section class="panel" id="secTiers" hidden>
       <h2>What the top 10 do differently</h2>
       <p class="muted">Average per ship in each rank band. Shaded cells are the highest of the four bands.</p>
@@ -39,7 +39,15 @@
       <p class="muted">Share of ships that have the room: top 10 against ranks 11-100.</p>
       <div class="tablewrap free"><table id="top10Rooms"></table></div>
     </section>
-
+    <section class="panel" id="secTrophy" hidden>
+      <h2>What goes with more trophies</h2>
+      <p class="muted">Rank correlation between trophies and each measure over the top 100 (+1 = always more trophies with more
+        of it, 0 = no link). The top 100 are close together, so these links are weak: read them as hints, not rules.</p>
+      <div id="trophyBars" class="dbars"></div>
+    </section>
+    </div>
+    <div class="tabpane" data-tab="builds" hidden>
+      <p class="tabintro">Which weapon setups the top 100 fly, what rooms each build runs, and how much power they use. Plan a build here and open it in the optimizer.</p>
     <section class="panel" id="secExplorer" hidden>
       <h2>Build explorer</h2>
       <p class="muted">Pick a build to see which rooms its top-100 ships run, per 100 hull tiles (so you can scale it to
@@ -50,13 +58,6 @@
       <div id="exInfo" class="muted"></div>
       <div class="tablewrap free"><table id="exTable"></table></div>
     </section>
-
-    <section class="panel" id="secHulls" hidden>
-      <h2>Hulls they fly</h2>
-      <p class="muted">Open a hull in the optimizer: it then starts searching from these players' layouts.</p>
-      <div class="tablewrap tall"><table id="hullTable"></table></div>
-    </section>
-
     <section class="panel" id="secBuilds" hidden>
       <h2>Builds: offense and defense</h2>
       <p class="muted">Each ship is classified by its weapons (the biggest share is the build; a second weapon type with at
@@ -71,50 +72,6 @@
       <div class="toolbar"><select id="buildFilter" aria-label="Filter by build"></select></div>
       <div class="tablewrap tall"><table id="buildShips"></table></div>
     </section>
-
-    <section class="panel" id="secGallery" hidden>
-      <h2>Layouts</h2>
-      <div class="toolbar">
-        <select id="galPick" aria-label="Player"></select>
-        <a id="galOpen" class="btnlink" href="#">Open this hull in the optimizer</a>
-      </div>
-      <div id="galInfo" class="muted"></div>
-      <div id="galBuild" class="buildlabel"></div>
-      <div id="galSvg" class="layoutbox"></div>
-      <div id="galLegend" class="legend"></div>
-    </section>
-
-    <section class="panel" id="secRooms" hidden>
-      <h2>Rooms per ship</h2>
-      <p class="muted">Median number of rooms of each type in a top-100 ship (bar), with the middle half of ships (line).</p>
-      <div id="roomBars" class="hbars"></div>
-      <h3>Most used rooms</h3>
-      <div class="tablewrap tall"><table id="popTable"></table></div>
-    </section>
-
-    <section class="panel" id="secTrophy" hidden>
-      <h2>What goes with more trophies</h2>
-      <p class="muted">Rank correlation between trophies and each measure over the top 100 (+1 = always more trophies with more
-        of it, 0 = no link). The top 100 are close together, so these links are weak: read them as hints, not rules.</p>
-      <div id="trophyBars" class="dbars"></div>
-    </section>
-
-    <section class="panel" id="secEdge" hidden>
-      <h2>Which rooms face the hull edge</h2>
-      <p class="muted">How much of each room type's outline is hull edge, compared with the average room
-        (log2 ratio: +1 = twice as often, -1 = half as often). The optimizer uses this as <code>TAG_EDGE</code>.</p>
-      <div id="edgeBars" class="dbars"></div>
-    </section>
-
-    <section class="panel" id="secAdj" hidden>
-      <h2>Which rooms sit next to each other</h2>
-      <p class="muted">Touching room pairs compared with chance (log2 of observed / expected). Blue = top ships put
-        these types together more often than chance, orange = they keep them apart. Pairs seen too rarely are left grey
-        and are not used by the optimizer (<code>TAG_ADJ</code>). Hover a cell for the counts.</p>
-      <div class="tablewrap free"><table id="adjTable" class="heat"></table></div>
-      <div class="scale"><span>apart</span><i class="sw" style="background:var(--neg)"></i><i class="sw" style="background:var(--mid)"></i><i class="sw" style="background:var(--pos)"></i><span>together</span></div>
-    </section>
-
     <section class="panel" id="secPower" hidden>
       <h2>Power: made and needed</h2>
       <p class="muted">For every top ship: the power its reactors make, and the power all its systems (weapons, shields,
@@ -128,7 +85,35 @@
       <p class="muted">Share of all top ships' full-power draw, by room type.</p>
       <div id="powerDraw" class="hbars"></div>
     </section>
-
+    </div>
+    <div class="tabpane" data-tab="ships" hidden>
+      <p class="tabintro">The hulls top players fly and their actual layouts. Open any hull in the optimizer to start from these layouts.</p>
+    <section class="panel" id="secHulls" hidden>
+      <h2>Hulls they fly</h2>
+      <p class="muted">Open a hull in the optimizer: it then starts searching from these players' layouts.</p>
+      <div class="tablewrap tall"><table id="hullTable"></table></div>
+    </section>
+    <section class="panel" id="secGallery" hidden>
+      <h2>Layouts</h2>
+      <div class="toolbar">
+        <select id="galPick" aria-label="Player"></select>
+        <a id="galOpen" class="btnlink" href="#">Open this hull in the optimizer</a>
+      </div>
+      <div id="galInfo" class="muted"></div>
+      <div id="galBuild" class="buildlabel"></div>
+      <div id="galSvg" class="layoutbox"></div>
+      <div id="galLegend" class="legend"></div>
+    </section>
+    </div>
+    <div class="tabpane" data-tab="placement" hidden>
+      <p class="tabintro">Where top ships put their rooms: rooms per ship, anti-teleport gates, hull edge, neighbours, armor and lifts. The optimizer learns these patterns.</p>
+    <section class="panel" id="secRooms" hidden>
+      <h2>Rooms per ship</h2>
+      <p class="muted">Median number of rooms of each type in a top-100 ship (bar), with the middle half of ships (line).</p>
+      <div id="roomBars" class="hbars"></div>
+      <h3>Most used rooms</h3>
+      <div class="tablewrap tall"><table id="popTable"></table></div>
+    </section>
     <section class="panel" id="secGates" hidden>
       <h2>Gate placement (anti-teleport)</h2>
       <p class="muted">Where top ships put their Teleport Interdictor Gates, Security Gates and Teleport Repulsors,
@@ -144,18 +129,34 @@
       <h3>What the optimizer learns</h3>
       <div id="gateLearn" class="muted"></div>
     </section>
-
+    <section class="panel" id="secEdge" hidden>
+      <h2>Which rooms face the hull edge</h2>
+      <p class="muted">How much of each room type's outline is hull edge, compared with the average room
+        (log2 ratio: +1 = twice as often, -1 = half as often). The optimizer uses this as <code>TAG_EDGE</code>.</p>
+      <div id="edgeBars" class="dbars"></div>
+    </section>
+    <section class="panel" id="secAdj" hidden>
+      <h2>Which rooms sit next to each other</h2>
+      <p class="muted">Touching room pairs compared with chance (log2 of observed / expected). Blue = top ships put
+        these types together more often than chance, orange = they keep them apart. Pairs seen too rarely are left grey
+        and are not used by the optimizer (<code>TAG_ADJ</code>). Hover a cell for the counts.</p>
+      <div class="tablewrap free"><table id="adjTable" class="heat"></table></div>
+      <div class="scale"><span>apart</span><i class="sw" style="background:var(--neg)"></i><i class="sw" style="background:var(--mid)"></i><i class="sw" style="background:var(--pos)"></i><span>together</span></div>
+    </section>
     <section class="panel" id="secArmor" hidden>
       <h2>Armor and lifts</h2>
       <div id="armorBars" class="hbars"></div>
       <div id="armorNotes" class="muted"></div>
     </section>
-
+    </div>
+    <div class="tabpane" data-tab="optimizer" hidden>
+      <p class="tabintro">How close the optimizer gets to the real top ships with the same hull and rooms.</p>
     <section class="panel" id="secCalib" hidden>
       <h2>How close the optimizer gets</h2>
       <div id="benchText"></div>
       <div class="tablewrap free"><table id="benchTable"></table></div>
     </section>
+    </div>
   </main>
 
   <footer class="muted">Data: top 100 of the PixyShip ladder, refreshed every two weeks (1st and 15th of the month) by the repository's GitHub Action

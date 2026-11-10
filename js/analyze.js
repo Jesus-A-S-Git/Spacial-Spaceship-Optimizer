@@ -510,7 +510,7 @@ Promise.all([Top100.load(), Hulls.load(false).catch(() => null)]).then(() => {
   }
   $("loadMsg").hidden = true;
   $("subtitle").textContent = `How the top ${a.ships} ladder players build their ships (data from ${(a.updated || "").slice(0, 10)}), and what the optimizer learns from them.`;
-  tiles(a); show("secOverview"); show("jump");
+  tiles(a); show("secOverview");
   if (tiersSection(a)) show("secTiers");
   if (explorer(a)) show("secExplorer");
   hullTable(a); show("secHulls");
@@ -524,4 +524,34 @@ Promise.all([Top100.load(), Hulls.load(false).catch(() => null)]).then(() => {
   if (gatesSection(a)) show("secGates");
   armor(a); show("secArmor");
   benchmark(a); show("secCalib");
+  setupTabs();
 });
+
+// ---------------------------------------------------------------- tabs (Overview / Builds / Ships & layouts / Room placement / Optimizer check)
+// The address keeps the tab (#builds) or a section (#secGates opens its tab and scrolls to it).
+function setupTabs() {
+  const panes = [...document.querySelectorAll(".tabpane")];
+  panes.forEach((p) => {
+    const secs = [...p.querySelectorAll("section.panel")].filter((x) => !x.hidden && x.querySelector("h2"));
+    if (secs.length > 2) {
+      p.querySelector(".tabintro").after(el("nav", { class: "inpage" }, ...secs.map((x) =>
+        el("a", { href: "#" + x.id, text: x.querySelector("h2").textContent }))));
+    }
+  });
+  $("pageTabs").hidden = false;
+  const open = (hash, scroll) => {
+    const id = (hash || "").replace(/^#/, "");
+    const sec = id && document.getElementById(id);
+    const pane = sec && sec.classList.contains("tabpane") ? sec : sec ? sec.closest(".tabpane") : null;
+    const name = (pane || panes[0]).dataset.tab;
+    panes.forEach((p) => { p.hidden = p.dataset.tab !== name; });
+    document.querySelectorAll("#pageTabs a").forEach((x) => x.classList.toggle("active", x.dataset.tab === name));
+    if (sec && !sec.classList.contains("tabpane") && scroll) sec.scrollIntoView({ block: "start" });
+    else if (scroll) window.scrollTo(0, 0);
+  };
+  document.querySelectorAll("#pageTabs a").forEach((x) => { x.href = "#" + x.dataset.tab; });
+  // tab ids for the panes so #builds works
+  panes.forEach((p) => { if (!p.id) p.id = p.dataset.tab; });
+  window.addEventListener("hashchange", () => open(location.hash, true));
+  open(location.hash, !!location.hash);
+}
