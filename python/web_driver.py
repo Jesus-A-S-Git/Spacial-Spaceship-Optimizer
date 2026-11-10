@@ -249,7 +249,7 @@ def layout_json(m, res):
     legend = dict(m.SYMBOLS)
     legend.update(m.NONCOMBAT_SYMBOLS)
     stats = dict(
-        armor_tiles=len(info["armor"]), weighted_touchpoints=info["arm_sum"],
+        armor_tiles=len(info["armor"]), armor_wanted=int(m.ARMOR_COUNT), weighted_touchpoints=info["arm_sum"],
         avg_travel=info["avg"], corner_travel_max=info["cmax"], corner_travel_avg=info["cavg"],
         unreachable_pairs=info["unreach"], corridor_tiles=info["corridor"],
         weak_lift_columns=info["lift_pen"], lift_tiles_touching_nothing=info["lift_touch_bad"],
@@ -499,6 +499,10 @@ def run(cfg_json, source_path, emit_fn):
     except RuntimeError as e:
         emit(dict(type="error", message=f"Cannot start: {e}"))
         return
+    except (ValueError, IndexError):
+        emit(dict(type="error", message="Cannot start: there is no free tile left for armor, lifts or vents. "
+                                        "Remove a room, lower the armor, or pick a bigger hull."))
+        return
     except _Stop:
         emit(dict(type="done", reason="time limit", layouts=[], restarts=0))
         return
@@ -645,6 +649,28 @@ def run(cfg_json, source_path, emit_fn):
                 emit(dict(type="log", msg=f"Clean-up skipped: {e}"))
                 continue
             if r2:
+                population = m.add_population(population, (r2[0], r2), pop_size)
+                if r2[0] > best_score:
+                    best, best_score = r2, r2[0]
+                    best_box[0] = best_score
+        # Layouts that were not cleaned up but still have cut-off combat rooms: reconnect them too, so the
+        # alternatives shown are not cut off either (each repair is bounded by its own, hull-sized budget).
+        if getattr(m, "CONNECT_ALL", False) and hasattr(m, "repair_connections"):
+            deadline2 = time.time() + max(3.0, min(15.0, len(m.ALL_TILES) / 40.0))
+            fixed = []
+            for sc0, res0 in population:
+                if time.time() > deadline2:
+                    break
+                if res0[2].get("unreach", 0) <= 0:
+                    continue
+                try:
+                    st2, r2 = m.repair_connections(m.clone(res0[2]["state"]), res0, rngf)
+                except Exception:
+                    continue
+                if r2 is not res0 and r2 and r2[0] != res0[0]:
+                    fixed.append((sc0, res0, r2))
+            for sc0, res0, r2 in fixed:
+                population = [p for p in population if p[1] is not res0]
                 population = m.add_population(population, (r2[0], r2), pop_size)
                 if r2[0] > best_score:
                     best, best_score = r2, r2[0]

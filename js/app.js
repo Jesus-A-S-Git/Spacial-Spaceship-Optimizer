@@ -532,11 +532,66 @@ function buildTopUi() {
 // so good ideas spread between them. The best layouts are also saved in this browser, so a later
 // search can continue from them.
 const ROUND_SECONDS = 45;
-const BEST_KEY = "shipOptimizerBest.v1";
+const BEST_KEY = "shipOptimizerBest.v2";   // v2 stores the hull + room list the states belong to (v1 had none)
 let pool = [];           // [{w, ready, prog, layouts}]
 let run = null;          // the search in progress
 let engineFailed = false;
 let found = [];          // best layouts across all cores and rounds (layout JSON, best first)
+let foundSig = null;     // hull + room list that `found` belongs to
+let engineRestarting = false;   // after Stop: the engine reloads in the background
+
+// Identity of the setup a layout belongs to: hull rows and room list. Saved layouts and results from another setup are never reused.
+function setupSig() {
+  const t = hullRows().join("/") + "|" + cfgState.rooms.filter((r) => (r.count || 0) > 0).map((r) => [r.cat, r.w, r.h, r.count].join(",")).join(";");
+  let h = 5381;
+  for (let i = 0; i < t.length; i++) h = ((h * 33) ^ t.charCodeAt(i)) >>> 0;
+  return h.toString(36) + "." + t.length;
+}
+// Is every room of this list placeable somewhere on the hull (rectangles, no rotation, resource rooms on r tiles)? Returns an error text or null.
+function preflight() {
+  const rows = hullRows();
+  if (!rows.length) return "Set a hull first (Hull tab).";
+  const active = cfgState.rooms.filter((r) => (r.count || 0) > 0);
+  if (!active.length) return "Add at least one room before starting (Rooms tab, or use Recommend rooms).";
+  const H = rows.length, W = rows[0] ? rows[0].length : 0;
+  const hasR = rows.some((r) => r.includes("r"));
+  const roomTiles = active.reduce((a, r) => a + r.count * r.w * r.h, 0);
+  const tiles = rows.join("").replace(/[^xr]/g, "").length;
+  const armor = Math.max(0, Math.round(cfgState.settings.ARMOR_COUNT || 0));
+  if (tiles > 0 && roomTiles + armor === tiles) return `No free tile is left for armor, lifts or vents: the rooms (${roomTiles}) and ${armor} armor fill all ${tiles} tiles. Remove a room or lower the armor.`;
+  const fits = (r) => {
+    const kind = catOf(r.cat).kind;
+    for (let y = 0; y + r.h <= H; y++) for (let x = 0; x + r.w <= W; x++) {
+      let nx = 0, nr = 0, ok = true;
+      for (let j = 0; j < r.h && ok; j++) for (let i = 0; i < r.w; i++) {
+        const c = rows[y + j][x + i];
+        if (c === "x") nx++; else if (c === "r") nr++; else { ok = false; break; }
+      }
+      if (!ok) continue;
+      const n = r.w * r.h;
+      if (!hasR) return true;
+      if (kind === "resource") { if (nr === n || (nx === n && cfgState.resource_anywhere)) return true; } else if (nx === n) return true;
+    }
+    return false;
+  };
+  const seen = new Set();
+  for (const r of active) {
+    const k = [r.cat, r.w, r.h].join(",");
+    if (seen.has(k)) continue;
+    seen.add(k);
+    if (!fits(r)) {
+      const kind = catOf(r.cat).kind;
+      return `"${r.name || catOf(r.cat).label}" (${r.w}x${r.h}) does not fit anywhere on this hull` +
+        (kind === "resource" && hasR && !cfgState.resource_anywhere ? " (resource rooms need a free block of resource space, r tiles)" : hasR ? " (only resource rooms may use r tiles)" : "") +
+        ". Make it smaller, remove it, or pick a bigger hull.";
+    }
+  }
+  return null;
+}
+// the hull or room list changed while a search runs: its results would belong to the old setup, so end the search
+function watchRun() {
+  if (running && run && run.sig !== setupSig()) stop("Search stopped because the hull or room list changed. The layouts shown belong to the earlier setup; press Start to search the new one.");
+}
 
 function autoCores() { return Math.max(1, Math.min(8, (navigator.hardwareConcurrency || 2) - 1)); }
 function wantedCores() {
@@ -575,23 +630,34 @@ function showError(msg, retry) {
   updateSteps();
 }
 function loadSavedBest() {
-  try { const v = JSON.parse(localStorage.getItem(BEST_KEY) || "null"); return Array.isArray(v) ? v : []; } catch (e) { return []; }
+  try {
+    const v = JSON.parse(localStorage.getItem(BEST_KEY) || "null");
+    return v && v.sig === setupSig() && Array.isArray(v.states) ? v.states : [];
+  } catch (e) { return []; }
+}
+function hasSavedForOtherSetup() {
+  try { const v = JSON.parse(localStorage.getItem(BEST_KEY) || "null"); return !!(v && Array.isArray(v.states) && v.states.length && v.sig !== setupSig()); } catch (e) { return false; }
 }
 function saveBest() {
-  try { localStorage.setItem(BEST_KEY, JSON.stringify(found.slice(0, 6).map((l) => l.state).filter(Boolean))); } catch (e) { /* ignore */ }
+  if (!found.length || foundSig == null) return;
+  try { localStorage.setItem(BEST_KEY, JSON.stringify({ sig: foundSig, states: found.slice(0, 6).map((l) => l.state).filter(Boolean) })); } catch (e) { /* ignore */ }
 }
 function updateSavedNote() {
   const n = loadSavedBest().length;
-  $("resumeNote").textContent = n ? `${n} saved layout${n > 1 ? "s" : ""} from earlier searches in this browser.` : "No saved layouts yet.";
+  $("resumeNote").textContent = n ? `${n} saved layout${n > 1 ? "s" : ""} for this hull and room list, from earlier searches in this browser.`
+    : hasSavedForOtherSetup() ? "0 saved layouts for this hull and room list (the saved ones belong to another hull or room list)." : "No saved layouts yet.";
   $("resume").disabled = !n;
 }
 function mergeLayouts(list) {
   if (!list || !list.length) return false;
-  const key = (l) => l.grid.join("/") + "|" + l.armor.map((t) => t.join(",")).join(" ");
+  if (run) { const [rw, rh] = run.dims; list = list.filter((l) => l.width === rw && l.height === rh); if (!list.length) return false; }
+  // near-identical layouts (same score and statistics, e.g. one lift or vent moved) count as one
+  const key = (l) => [l.score.toFixed(1), l.stats.avg_travel.toFixed(2), l.stats.armor_tiles, l.stats.weighted_touchpoints, l.stats.lifts, l.stats.vents, l.stats.unreachable_pairs].join("|");
   const all = new Map();
   found.concat(list).forEach((l) => { const k = key(l); if (!all.has(k) || all.get(k).score < l.score) all.set(k, l); });
   const before = found.length ? found[0].score : -Infinity;
   const first = !found.length;
+  if (run) foundSig = run.sig;
   found = [...all.values()].sort((x, y) => y.score - x.score).slice(0, 5);
   setLayouts(found, true);
   if (found[0].score > before) saveBest();
@@ -613,12 +679,22 @@ function showProgress() {
   const round = run.rounds ? ` | round ${run.round} (${Math.round(run.roundLen)}s)` : "";
   $("progressText").textContent = `Restart ${doneNow}${total} on ${cores}${round}` + (best != null ? ` | best score ${best.toFixed(1)}` : "") + ` | ${elapsed.toFixed(0)}s elapsed`;
 }
+// a raw Python traceback is no use to the user: keep its last line and point at likely causes
+function friendlyError(msg) {
+  if (!/^Traceback/.test(msg)) return msg;
+  const last = msg.trim().split("\n").pop();
+  const hint = /randrange|empty range/.test(last) ? " This usually means a setting leaves nothing to choose from (for example 0 lifts, or no free tile for armor, lifts or vents)." : "";
+  return `The search engine hit a problem: ${last}.${hint} Check the rooms and the Advanced settings, then press Start again.`;
+}
 function handle(m, slot) {
   switch (m.type) {
-    case "status": if (!running) $("status").textContent = m.msg; break;
+    case "status": if (!running && !engineRestarting) $("status").textContent = m.msg; break;
     case "ready":
       slot.ready = true;
-      if (!running) { $("status").textContent = "Ready"; $("startBtn").disabled = false; }
+      if (!running) {
+        if (engineRestarting) { engineRestarting = false; $("progressText").textContent = $("progressText").textContent.replace(/ \(stopped\)$/, ""); }
+        $("status").textContent = "Ready"; $("startBtn").disabled = false;
+      }
       break;
     case "log": if (slot === pool[0]) $("status").textContent = m.msg; break;
     case "progress": slot.prog = m; if (running) { $("status").textContent = "Searching..."; showProgress(); } break;
@@ -629,7 +705,7 @@ function handle(m, slot) {
       slot.finished = true;
       if (run && pool.every((p) => p.finished)) roundFinished();
       break;
-    case "error": showError(m.message); break;
+    case "error": showError(friendlyError(m.message)); break;
   }
 }
 function startRound() {
@@ -685,18 +761,23 @@ function buildConfig() {
   };
 }
 function start() {
+  engineRestarting = false;
+  const problem = preflight();
+  if (problem) { showError(problem); return; }
   $("errorBox").hidden = true;
   $("oddsBox").textContent = "";
   $("barFill").style.width = "0";
   $("progressText").textContent = "";
   const sc = cfgState.search;
   const resume = $("resume").checked && !$("resume").disabled;
-  found = resume ? found.filter((l) => l.state) : [];
-  if (!resume) { layouts = []; $("altTabs").hidden = true; }
+  const sig = setupSig();
+  found = resume && foundSig === sig ? found.filter((l) => l.state) : [];
+  foundSig = sig;
+  if (!found.length) { layouts = []; activeIdx = 0; $("altTabs").hidden = true; $("scoreNote").hidden = true; $("layoutWrap").hidden = true; $("emptyMsg").hidden = false; }
   ensurePool(wantedCores());
   running = true;
   run = {
-    t0: Date.now(), round: 0, doneBefore: 0, roundLen: ROUND_SECONDS,
+    sig, dims: [hullRows()[0].length, hullRows().length], t0: Date.now(), round: 0, doneBefore: 0, roundLen: ROUND_SECONDS,
     timeLimit: Math.max(0, +sc.time_limit || 0), restarts: Math.max(0, Math.round(+sc.restarts || 0)),
     rounds: !(+sc.restarts) && !(+sc.stagnation),            // rounds share results between cores
     firstSeeds: resume ? loadSavedBest() : [],
@@ -704,20 +785,21 @@ function start() {
   };
   $("startBtn").disabled = true;
   $("stopBtn").disabled = false;
-  $("status").textContent = `Starting on ${pool.length} core${pool.length > 1 ? "s" : ""}...`;
+  $("status").textContent = `Starting on ${pool.length} core${pool.length > 1 ? "s" : ""}` + (anyReady() ? "..." : " (the engine is still loading, the search begins when it is ready)...");
   updateSteps();
   startRound();
 }
-function stop() {
+function stop(msg) {
   // The optimizer is a long synchronous Python loop, so the reliable way to stop it is to end the workers.
   // The best layouts found so far stay on screen and are saved for "Continue".
   pool.forEach((p) => p.w.terminate());
   pool = [];
-  $("status").textContent = "Stopped. Restarting Python runtime...";
+  engineRestarting = true;
+  setIdleUi();
+  $("status").textContent = (typeof msg === "string" ? msg + " " : "Stopped. Your best layouts are kept. ") + "Restarting engine...";
   $("progressText").textContent += " (stopped)";
   updateSavedNote();
-  setIdleUi();
-  $("startBtn").disabled = true;
+  $("startBtn").disabled = false;      // a search pressed now waits in the new worker until the engine is loaded
   ensurePool(1);
 }
 
@@ -731,12 +813,25 @@ function setLayouts(list, keepTab) {
 function renderTabs() {
   const box = $("altTabs");
   box.innerHTML = "";
-  box.hidden = layouts.length < 2;
-  layouts.forEach((l, i) => {
+  // alternatives far below the best are noise (scores can be very negative on big hulls): hide them from the tabs
+  const best = layouts.length ? layouts[0].score : 0;
+  const gap = Math.max(150, 0.25 * Math.abs(best));
+  const shown = layouts.map((l, i) => i).filter((i) => i === 0 || layouts[i].score >= best - gap);
+  if (!shown.includes(activeIdx)) activeIdx = 0;
+  box.hidden = shown.length < 2;
+  shown.forEach((i) => {
+    const l = layouts[i];
     const b = el("button", { class: i === activeIdx ? "active" : "", text: (i === 0 ? "Best" : "Alt " + i) + ` (${l.score.toFixed(0)})` });
     b.onclick = () => { activeIdx = i; renderTabs(); renderLayout(); };
     box.append(b);
   });
+  const hidden = layouts.length - shown.length;
+  const note = $("scoreNote");
+  const bits = [];
+  if (best < 0) bits.push("Scores can be negative on big hulls. Higher is better; only compare layouts for the same hull and rooms.");
+  if (hidden) bits.push(`${hidden} much weaker alternative${hidden > 1 ? "s" : ""} hidden.`);
+  note.textContent = bits.join(" ");
+  note.hidden = !bits.length;
 }
 const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 // colour of a room in the result picture: its category colour (older results without categories: by kind)
@@ -800,12 +895,13 @@ function renderLayout() {
   items.forEach(([c, t]) => { const s = el("span"); s.innerHTML = `<i style="background:${c}"></i>`; s.append(t); legend.append(s); });
 
   const s = l.stats;
+  const connectWanted = cfgState.connect_all;
   const defs = [
     ["Average travel", s.avg_travel.toFixed(1)], ["Corner travel max / avg", `${s.corner_travel_max.toFixed(0)} / ${s.corner_travel_avg.toFixed(1)}`],
     ["Unreachable room pairs", s.unreachable_pairs, s.unreachable_pairs > 0], ["Lifts", s.lifts],
     ["Lift usage", Object.entries(s.lift_usage).map(([k, v]) => `x${k}: ${v}`).join(", ") || "-"],
     ["Vents (unlinked)", `${s.vents} (${s.vents_unlinked})`, s.vents_unlinked > 0],
-    ["Armor tiles", s.armor_tiles], ["Armor touching no room", s.armor_touching_no_room, s.armor_touching_no_room > 0],
+    ["Armor tiles placed", s.armor_wanted ? `${s.armor_tiles} of ${s.armor_wanted}` : s.armor_tiles, s.armor_wanted > s.armor_tiles], ["Armor touching no room", s.armor_touching_no_room, s.armor_touching_no_room > 0],
     ["Combat rooms with no armor", s.combat_rooms_without_armor, s.combat_rooms_without_armor > 0],
     ["Priority rooms with no armor", s.priority_rooms_without_armor, s.priority_rooms_without_armor > 0],
     ["Sweet-spot shortfall / excess", `${s.sweet_spot_shortfall.toFixed(0)} / ${s.sweet_spot_excess}`],
@@ -815,6 +911,11 @@ function renderLayout() {
   const gates = gateHabits(l);
   if (gates) defs.push(...gates);
   if (s.center_rooms) defs.push([`Anti-air distance from combat middle (${s.center_rooms} room${s.center_rooms > 1 ? "s" : ""})`, `${s.center_distance.toFixed(1)} tiles`, s.center_distance / s.center_rooms > 4]);
+  const warns = [];
+  if (s.armor_wanted > s.armor_tiles) warns.push(`Only ${s.armor_tiles} of the ${s.armor_wanted} armor tiles you asked for fit in this layout (the rooms, lifts and vents left no room for the rest). Remove a room or lower the armor setting.`);
+  if (s.unreachable_pairs > 0 && connectWanted) warns.push(`${s.unreachable_pairs} combat room pairs cannot reach each other although "Connect every combat room" is on. Add lifts or vents (Advanced), leave a free column for a lift, or search longer.`);
+  const wb = $("layoutWarn"); wb.innerHTML = ""; wb.hidden = !warns.length;
+  warns.forEach((w) => wb.append(el("div", { text: w })));
   const sb = $("stats"); sb.innerHTML = "";
   defs.forEach(([k, v, warn]) => sb.append(el("div", { class: "stat" + (warn ? " warn" : "") }, el("b", { text: String(v) }), document.createTextNode(k))));
 
@@ -901,6 +1002,8 @@ function updateSteps() {
   $("stepRooms").textContent = n ? (used > tiles ? (planReady() ? "Recommended rooms ready - press Use these rooms" : `${n} rooms - too many for the hull, try Recommend rooms`) : `${n} rooms`) : "no rooms yet";
   $("stepRooms").classList.toggle("bad", used > tiles);
   $("stepSearch").textContent = running ? "searching..." : found.length ? `best score ${found[0].score.toFixed(0)}` : anyReady() ? "ready" : engineFailed ? "unavailable (offline?)" : "loading Python...";
+  watchRun();
+  updateSavedNote();
   const done = { hull: !!tiles, rooms: n > 0 && used <= tiles, search: found.length > 0 };
   document.querySelectorAll("#steps li").forEach((li) => li.classList.toggle("done", !!done[li.dataset.step]));
 }
@@ -1086,7 +1189,7 @@ $("roomsPaste").onclick = async () => {
 
 // ---------------------------------------------------------------- wire up
 $("startBtn").onclick = start;
-$("stopBtn").onclick = stop;
+$("stopBtn").onclick = () => stop();
 $("resetBtn").onclick = () => { if (confirm("Reset all settings to the defaults?")) { cfgState = clone(DEFAULTS); saveSettings(); buildAll(); buildTopUi(); buildPlanner(); updateTopNote(); } };
 $("dlJson").onclick = () => download("ship-layout.json", JSON.stringify(layouts[activeIdx], null, 2), "application/json");
 $("dlSvg").onclick = () => download("ship-layout.svg", layoutSvg(layouts[activeIdx]), "image/svg+xml");

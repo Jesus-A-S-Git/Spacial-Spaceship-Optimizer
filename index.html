@@ -44,6 +44,7 @@
       </div>
 
       <div id="altTabs" class="tabs" hidden></div>
+      <div id="scoreNote" class="muted" hidden></div>
       <div id="layoutWrap" hidden>
         <div id="layoutSvg"></div>
         <div id="legend" class="legend"></div>
@@ -53,6 +54,7 @@
           <button id="dlJson">Download layout (JSON)</button>
         </div>
         <h3>Score <span id="scoreVal"></span></h3>
+        <div id="layoutWarn" class="note warn" hidden></div>
         <div id="stats" class="stats"></div>
         <details class="sub" open>
           <summary>Room coordinates (top-left x, y)</summary>
@@ -157,6 +159,7 @@
         <h2>Search</h2>
         <h4>How long</h4>
         <div class="toolbar tight timechips" id="timeChips"></div>
+        <div class="muted">The final clean-up adds a few seconds after the time is up.</div>
         <div class="grid2">
           <label for="quickTime">Time limit (seconds, 0 = until you press Stop)</label><input type="number" id="quickTime" min="0" step="30">
         </div>
