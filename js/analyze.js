@@ -37,14 +37,14 @@ function hullTable(a) {
   const t = $("hullTable");
   const max = Math.max(...a.hulls.map((h) => h.count));
   t.replaceChildren(el("tr", {}, el("th", { text: "Hull" }), el("th", { text: "Players" }), el("th", { class: "num", text: "Best rank" }),
-    el("th", { class: "num", text: "Median rank" }), el("th")));
+    el("th", { class: "num hidem", text: "Median rank" }), el("th")));
   a.hulls.forEach((h) => {
     const bar = el("span", { class: "minibar", style: `width:${Math.max(3, (h.count / max) * 120)}px` });
     t.append(el("tr", {},
       el("td", { text: h.ship_name }),
       el("td", { title: `${h.count} of the top 100` }, bar, document.createTextNode(String(h.count))),
       el("td", { class: "num", text: "#" + h.best_rank }),
-      el("td", { class: "num", text: "#" + fmt(h.median_rank, 0) }),
+      el("td", { class: "num hidem", text: "#" + fmt(h.median_rank, 0) }),
       el("td", {}, el("a", { class: "btnlink small", href: optimizerLink(h.ship_id), text: "Open in optimizer" }))));
   });
 }
