@@ -45,7 +45,7 @@ function hullTable(a) {
       el("td", { title: `${h.count} of the top 100` }, bar, document.createTextNode(String(h.count))),
       el("td", { class: "num", text: "#" + h.best_rank }),
       el("td", { class: "num hidem", text: "#" + fmt(h.median_rank, 0) }),
-      el("td", {}, el("a", { class: "btnlink small", href: optimizerLink(h.ship_id), text: "Open in optimizer" }))));
+      el("td", {}, el("a", { class: "btnlink small", href: optimizerLink(h.ship_id), text: "Open" , title: "Open this hull in the optimizer", "aria-label": "Open " + h.ship_name + " in optimizer" }))));
   });
 }
 

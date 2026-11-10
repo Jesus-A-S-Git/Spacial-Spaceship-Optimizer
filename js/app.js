@@ -890,6 +890,7 @@ function updateHullBadge() {
   if (typeof updatePlanLevel === "function") updatePlanLevel();
   updateSteps();
 }
+function planReady() { try { return !!planResult && !planBefore && !$("planOut").hidden; } catch (e) { return false; } }
 function updateSteps() {
   if (!$("steps")) return;
   const rows = hullRows(), s = currentShip();
@@ -897,7 +898,7 @@ function updateSteps() {
   $("stepHull").textContent = s ? `${s.name}${s.level != null ? ", level " + s.level : ""}` : tiles ? `sample hull, ${tiles} tiles - pick yours` : "no hull yet";
   const n = cfgState.rooms.reduce((a, r) => a + (r.count || 0), 0);
   const used = cfgState.rooms.reduce((a, r) => a + (r.count || 0) * r.w * r.h, 0) + (cfgState.settings.ARMOR_COUNT || 0);
-  $("stepRooms").textContent = n ? `${n} rooms${used > tiles ? " - too many for the hull, try Recommend rooms" : ""}` : "no rooms yet";
+  $("stepRooms").textContent = n ? (used > tiles ? (planReady() ? "Recommended rooms ready - press Use these rooms" : `${n} rooms - too many for the hull, try Recommend rooms`) : `${n} rooms`) : "no rooms yet";
   $("stepRooms").classList.toggle("bad", used > tiles);
   $("stepSearch").textContent = running ? "searching..." : found.length ? `best score ${found[0].score.toFixed(0)}` : anyReady() ? "ready" : engineFailed ? "unavailable (offline?)" : "loading Python...";
   const done = { hull: !!tiles, rooms: n > 0 && used <= tiles, search: found.length > 0 };
@@ -1002,6 +1003,7 @@ function runPlanner() {
   planResult = Recommender.recommend(a, { rows, level, primary: cfgState.plan.primary, secondary: cfgState.plan.secondary, special: cfgState.plan.special });
   renderPlan(planResult);
   $("planStatus").textContent = "";
+  updateSteps();
 }
 function renderPlan(r) {
   $("planOut").hidden = false;
@@ -1042,6 +1044,7 @@ function usePlan() {
   cfgState.settings.ARMOR_COUNT = planResult.armor;
   saveSettings(); buildRooms(); buildStructure(); updateStyleNote();
   $("planUndo").hidden = false;
+  updateSteps();
   $("planStatus").textContent = `Room list replaced with the ${planResult.build} (${planResult.armor} armor tiles).`;
 }
 
