@@ -535,6 +535,7 @@ const ROUND_SECONDS = 45;
 const BEST_KEY = "shipOptimizerBest.v1";
 let pool = [];           // [{w, ready, prog, layouts}]
 let run = null;          // the search in progress
+let engineFailed = false;
 let found = [];          // best layouts across all cores and rounds (layout JSON, best first)
 
 function autoCores() { return Math.max(1, Math.min(8, (navigator.hardwareConcurrency || 2) - 1)); }
@@ -545,7 +546,7 @@ function wantedCores() {
 function spawn(i) {
   const slot = { w: new Worker("js/worker.js"), ready: false, prog: null, layouts: [], odds: null };
   slot.w.onmessage = (e) => handle(e.data, slot);
-  slot.w.onerror = (e) => showError("Worker error: " + (e.message || "could not start"));
+  slot.w.onerror = (e) => { e.preventDefault && e.preventDefault(); showError("Could not download the Python engine. It needs an internet connection (it is loaded from a CDN). Check your connection and press Retry.", true); };
   pool[i] = slot;
 }
 function ensurePool(n) {
@@ -561,10 +562,17 @@ function setIdleUi() {
   $("stopBtn").disabled = true;
   updateSteps();
 }
-function showError(msg) {
+function showError(msg, retry) {
   const b = $("errorBox"); b.textContent = msg; b.hidden = false;
+  if (retry) {
+    const rb = el("button", { type: "button", class: "small", text: "Retry", style: "margin-left:8px" });
+    rb.onclick = () => { b.hidden = true; $("status").textContent = "Loading Python runtime..."; engineFailed = false; resetPool(); updateSteps(); };
+    b.append(" ", rb);
+    engineFailed = true;
+  }
   if (running) { pool.forEach((p) => p.w.terminate()); pool = []; ensurePool(1); setIdleUi(); }
   $("status").textContent = "Error";
+  updateSteps();
 }
 function loadSavedBest() {
   try { const v = JSON.parse(localStorage.getItem(BEST_KEY) || "null"); return Array.isArray(v) ? v : []; } catch (e) { return []; }
@@ -583,9 +591,11 @@ function mergeLayouts(list) {
   const all = new Map();
   found.concat(list).forEach((l) => { const k = key(l); if (!all.has(k) || all.get(k).score < l.score) all.set(k, l); });
   const before = found.length ? found[0].score : -Infinity;
+  const first = !found.length;
   found = [...all.values()].sort((x, y) => y.score - x.score).slice(0, 5);
   setLayouts(found, true);
   if (found[0].score > before) saveBest();
+  if (first && window.matchMedia("(max-width: 960px)").matches) { const w = $("layoutWrap"); if (w) w.scrollIntoView({ behavior: "smooth", block: "start" }); }
   return true;
 }
 function showProgress() {
@@ -880,16 +890,17 @@ function updateHullBadge() {
   if (typeof updatePlanLevel === "function") updatePlanLevel();
   updateSteps();
 }
+function planReady() { try { return !!planResult && !planBefore && !$("planOut").hidden; } catch (e) { return false; } }
 function updateSteps() {
   if (!$("steps")) return;
   const rows = hullRows(), s = currentShip();
   const tiles = rows.join("").replace(/[^xr]/g, "").length;
-  $("stepHull").textContent = s ? `${s.name}${s.level != null ? ", level " + s.level : ""}` : tiles ? `custom hull, ${tiles} tiles` : "no hull yet";
+  $("stepHull").textContent = s ? `${s.name}${s.level != null ? ", level " + s.level : ""}` : tiles ? `sample hull, ${tiles} tiles - pick yours` : "no hull yet";
   const n = cfgState.rooms.reduce((a, r) => a + (r.count || 0), 0);
   const used = cfgState.rooms.reduce((a, r) => a + (r.count || 0) * r.w * r.h, 0) + (cfgState.settings.ARMOR_COUNT || 0);
-  $("stepRooms").textContent = n ? `${n} rooms${used > tiles ? " - too many for the hull" : ""}` : "no rooms yet";
+  $("stepRooms").textContent = n ? (used > tiles ? (planReady() ? "Recommended rooms ready - press Use these rooms" : `${n} rooms - too many for the hull, try Recommend rooms`) : `${n} rooms`) : "no rooms yet";
   $("stepRooms").classList.toggle("bad", used > tiles);
-  $("stepSearch").textContent = running ? "searching..." : found.length ? `best score ${found[0].score.toFixed(0)}` : anyReady() ? "ready" : "loading Python...";
+  $("stepSearch").textContent = running ? "searching..." : found.length ? `best score ${found[0].score.toFixed(0)}` : anyReady() ? "ready" : engineFailed ? "unavailable (offline?)" : "loading Python...";
   const done = { hull: !!tiles, rooms: n > 0 && used <= tiles, search: found.length > 0 };
   document.querySelectorAll("#steps li").forEach((li) => li.classList.toggle("done", !!done[li.dataset.step]));
 }
@@ -905,6 +916,7 @@ function showTab(name, scroll) {
   });
   document.querySelectorAll("#steps li").forEach((li) => li.classList.toggle("current", li.dataset.step === name));
   try { localStorage.setItem(TAB_KEY, name); } catch (e) { /* ignore */ }
+  if (name === "rooms" && !planResult && currentShip() && typeof runPlanner === "function") { try { runPlanner(); } catch (e) { /* ignore */ } }
   const aside = document.querySelector("aside.settings");
   aside.scrollTop = 0;
   if (scroll) aside.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -991,6 +1003,7 @@ function runPlanner() {
   planResult = Recommender.recommend(a, { rows, level, primary: cfgState.plan.primary, secondary: cfgState.plan.secondary, special: cfgState.plan.special });
   renderPlan(planResult);
   $("planStatus").textContent = "";
+  updateSteps();
 }
 function renderPlan(r) {
   $("planOut").hidden = false;
@@ -1031,6 +1044,7 @@ function usePlan() {
   cfgState.settings.ARMOR_COUNT = planResult.armor;
   saveSettings(); buildRooms(); buildStructure(); updateStyleNote();
   $("planUndo").hidden = false;
+  updateSteps();
   $("planStatus").textContent = `Room list replaced with the ${planResult.build} (${planResult.armor} armor tiles).`;
 }
 

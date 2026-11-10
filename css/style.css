@@ -156,3 +156,28 @@ button.linkbtn:hover:not(:disabled) { text-decoration: underline; }
   .steps li button { font-size: 13px; }
   .steps li span { display: none; }
 }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (max-width: 600px) {
+  .muted { font-size: 14px; }
+  button, summary, select, .topnav a, .paneltabs button { min-height: 40px; }
+  button.small, button.icon { min-height: 40px; min-width: 40px; }
+  summary { display: flex; align-items: center; }
+  .topnav a { display: inline-flex; align-items: center; }
+  .steps li button { min-height: 44px; }
+  footer a { display: inline-block; padding: 10px 0; }
+  .rc-top { flex-wrap: wrap; }
+  .rc-top input { flex: 1 1 100%; }
+  .rc-top select { flex: 1 1 0; min-width: 0; }
+}
+.steps li button { min-height: 32px; }
+summary::before { content: "▸"; display: inline-block; width: 1.1em; color: var(--accent); }
+details[open] > summary::before { content: "▾"; }
+summary { list-style: none; }
+summary::-webkit-details-marker { display: none; }
+@media (max-width: 600px) {
+  .toolbar button, .toolbar label.filebtn, label.filebtn, button.linkbtn, .steps button, #roomList select, #roomList button { min-height: 40px; }
+  label.filebtn { display: inline-flex; align-items: center; padding: 3px 12px; }
+  .muted a, p a, li a { display: inline-block; min-height: 40px; line-height: 40px; }
+  input[type=number], input[type=text], input[type=search] { min-height: 40px; }
+}
+button.linkbtn { min-height: 32px; }
