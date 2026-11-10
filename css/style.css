@@ -50,7 +50,7 @@ label.inline { display: block; margin-top: 10px; font-size: 13px; }
 .stat { background: var(--panel2); border-radius: 6px; padding: 6px 8px; font-size: 12px; }
 .stat b { display: block; font-size: 15px; }
 .stat.warn b { color: #ffb86b; }
-.tablewrap { max-height: 320px; overflow: auto; }
+.tablewrap { max-height: 320px; overflow: auto; margin-bottom: 10px; -webkit-overflow-scrolling: touch; }
 table { border-collapse: collapse; width: 100%; font-size: 13px; }
 th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--border); }
 th { position: sticky; top: 0; background: var(--panel); }
@@ -181,3 +181,5 @@ summary::-webkit-details-marker { display: none; }
   input[type=number], input[type=text], input[type=search] { min-height: 40px; }
 }
 button.linkbtn { min-height: 32px; }
+.note.warn { background: #3a2a14; border: 1px solid #7a5a22; color: #ffd9a0; border-radius: 6px; padding: 8px 10px; font-size: 13px; margin: 8px 0; }
+.note.warn div + div { margin-top: 4px; }

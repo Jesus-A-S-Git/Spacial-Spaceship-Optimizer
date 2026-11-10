@@ -162,7 +162,11 @@ const Recommender = (() => {
       if (!done) { armor = Math.max(0, armor - over()); break; }
     }
     if (dropped) notes.push(`Not everything fits on this hull: ${dropped} room${dropped > 1 ? "s" : ""} left out, least important first.`);
-    const free = hullTiles - roomTiles() - armor - liftTiles;
+    // slack: lifts cut full columns and vents/gaps strand tiles, so armor asked for up to the last free tile is never all placed
+    const slack = Math.round(hullTiles * 0.04);
+    const spare = hullTiles - roomTiles() - armor - liftTiles;
+    if (spare < slack) armor = Math.max(Math.min(armor, minArmor), armor - (slack - spare));
+    const free = hullTiles - roomTiles() - armor - liftTiles - slack;
     if (free > 0) armor += Math.min(free, Math.round(armor * 0.25));
     [use, make] = powerOf();
     if (GameRooms.hasTiers && use && make < use * ratio[0] * 0.9) notes.push("Power is low: the hull has no room for more reactors.");
