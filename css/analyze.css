@@ -59,3 +59,7 @@ section.panel { scroll-margin-top: 10px; }
 .stack .bar { display: flex; height: 18px; border-radius: 4px; overflow: hidden; background: var(--track); }
 .stack .bar span { height: 100%; }
 td.pos { color: #8fd19e; } td.neg { color: #ffb86b; }
+
+.takeaways ul { margin: 6px 0 10px; padding-left: 20px; }
+.takeaways li { margin: 3px 0; }
+.grid2col { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 0 24px; }

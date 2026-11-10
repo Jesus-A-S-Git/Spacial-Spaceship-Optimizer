@@ -25,7 +25,7 @@
       <a href="#secTiers">Top 10 vs the rest</a><a href="#secExplorer">Build explorer</a><a href="#secBuilds">Builds</a>
       <a href="#secHulls">Hulls</a><a href="#secGallery">Layouts</a><a href="#secRooms">Rooms per ship</a>
       <a href="#secTrophy">What goes with trophies</a><a href="#secEdge">Hull edge</a><a href="#secAdj">Neighbours</a>
-      <a href="#secPower">Power</a><a href="#secArmor">Armor and lifts</a><a href="#secCalib">Optimizer benchmark</a>
+      <a href="#secPower">Power</a><a href="#secGates">Gates</a><a href="#secArmor">Armor and lifts</a><a href="#secCalib">Optimizer benchmark</a>
     </nav>
 
     <section class="panel" id="secTiers" hidden>
@@ -127,6 +127,22 @@
       <h3>Where the power goes</h3>
       <p class="muted">Share of all top ships' full-power draw, by room type.</p>
       <div id="powerDraw" class="hbars"></div>
+    </section>
+
+    <section class="panel" id="secGates" hidden>
+      <h2>Gate placement (anti-teleport)</h2>
+      <p class="muted">Where top ships put their Teleport Interdictor Gates, Security Gates and Teleport Repulsors,
+        compared with all their other combat rooms. "Left / right" matters because crew walk through rooms sideways.</p>
+      <div id="gateTake" class="takeaways"></div>
+      <div class="tablewrap free"><table id="gateTable"></table></div>
+      <div class="grid2col">
+        <div><h3>Security Gate next to a lift: the other side</h3><div id="gateLiftOther" class="hbars"></div></div>
+        <div><h3>How ships place their two Interdictor Gates</h3><div id="gatePairs" class="hbars"></div></div>
+      </div>
+      <h3>Gates per ship</h3>
+      <div class="tablewrap free"><table id="gateCounts"></table></div>
+      <h3>What the optimizer learns</h3>
+      <div id="gateLearn" class="muted"></div>
     </section>
 
     <section class="panel" id="secArmor" hidden>

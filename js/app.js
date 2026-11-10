@@ -51,7 +51,7 @@ const DEFAULTS = {
     W_TRAVEL: 0.75, W_CORNER: 0.4, W_DISC: 20, CORNER_UNREACHABLE: 60,
     W_LIFT: 35, W_LTOUCH: 25, W_LIFT_BALANCE: 50, W_LIFT_COUNT: 18,
     W_GAP: 2.5, W_EMPTY: 6, W_RUN: 6, W_ISO: 25,
-    W_SPREAD: 1.5, SPREAD_CAP: 24, W_VENT: 15, W_CENTER: 3, W_BOOST: 20, W_PATTERN: 3, W_SHELL: 3, W_NC_CLUSTER: 15, W_LIFT_DENSITY: 20,
+    W_SPREAD: 1.5, SPREAD_CAP: 24, W_VENT: 15, W_CENTER: 3, W_BOOST: 20, W_PATTERN: 3, W_SHELL: 3, W_NC_CLUSTER: 15, W_LIFT_DENSITY: 20, W_GATE: 10,
   },
   search: { iters: 1200, polish: 300, restarts: 0, time_limit: 300, seed: 1, stagnation: 0, population: 24, cores: 0 },
   plan: { primary: "missile", secondary: "hangar", level: "auto", special: false },
@@ -92,7 +92,8 @@ const WEIGHT_GROUPS = [
     ["W_BOOST", "Booster touching a room it boosts (reward per room)"]]],
   ["Learned from the top 100 (when enabled under Search)", [
     ["W_PATTERN", "Room neighbours / edge use like top ships"], ["W_SHELL", "Hull-edge use per room kind"],
-    ["W_NC_CLUSTER", "Non-combat room not grouped"], ["W_LIFT_DENSITY", "Lift count outside top-100 range"]]],
+    ["W_NC_CLUSTER", "Non-combat room not grouped"], ["W_LIFT_DENSITY", "Lift count outside top-100 range"],
+    ["W_GATE", "Anti-teleport gates placed like top ships (Security Gate at a lift by a reactor, Interdictor Gates together)"]]],
 ];
 const SEARCH_FIELDS = [
   ["iters", "Annealing steps per restart"], ["polish", "Polish steps per restart"],
@@ -801,6 +802,8 @@ function renderLayout() {
     ["Unused open tiles", s.unused_open_tiles], ["Priority spread", s.priority_spread.toFixed(1)],
   ];
   if (s.boosted_rooms != null && l.rooms.some((r) => r.cat === "booster")) defs.push(["Rooms touching their booster", s.boosted_rooms]);
+  const gates = gateHabits(l);
+  if (gates) defs.push(...gates);
   if (s.center_rooms) defs.push([`Anti-air distance from combat middle (${s.center_rooms} room${s.center_rooms > 1 ? "s" : ""})`, `${s.center_distance.toFixed(1)} tiles`, s.center_distance / s.center_rooms > 4]);
   const sb = $("stats"); sb.innerHTML = "";
   defs.forEach(([k, v, warn]) => sb.append(el("div", { class: "stat" + (warn ? " warn" : "") }, el("b", { text: String(v) }), document.createTextNode(k))));
@@ -819,6 +822,35 @@ function renderLayout() {
     t.append(tr);
   });
   l.bonus.forEach((r) => t.append(el("tr", {}, el("td", { text: r.name }), el("td", { text: "Bonus" }), el("td", { text: `${r.w}x${r.h}` }), el("td", { text: `${r.x}, ${r.y}` }), el("td"))));
+}
+// how the result places its anti-teleport gates, in the top ships' terms (Top 100 page, Gate placement)
+function gateHabits(l) {
+  const kind = (r) => (/interdictor/i.test(r.name) ? "tig" : /security gate/i.test(r.name) ? "sg" : "");
+  const G = l.rooms.filter((r) => kind(r));
+  if (!G.length) return null;
+  const liftAt = new Set();
+  l.lifts.forEach(([x, a, b]) => { for (let y = a; y <= b; y++) liftAt.add(x + "," + y); });
+  const roomAt = new Map();
+  l.rooms.forEach((r) => { for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) roomAt.set(x + "," + y, r); });
+  const side = (r, dx) => Array.from({ length: r.h }, (_, i) => (dx < 0 ? r.x - 1 : r.x + r.w) + "," + (r.y + i));
+  const ring = (r) => [...side(r, -1), ...side(r, 1), ...Array.from({ length: r.w }, (_, i) => [(r.x + i) + "," + (r.y - 1), (r.x + i) + "," + (r.y + r.h)]).flat()];
+  const reactor = (t) => { const o = roomAt.get(t); return o && (o.cat === "reactor" || o.priority && !o.cat); };
+  const out = [];
+  const sg = G.filter((r) => kind(r) === "sg"), tig = G.filter((r) => kind(r) === "tig");
+  if (sg.length) {
+    let lift = 0, lr = 0;
+    sg.forEach((r) => {
+      const L = side(r, -1), R = side(r, 1);
+      const l1 = L.some((t) => liftAt.has(t)), r1 = R.some((t) => liftAt.has(t));
+      if (l1 || r1) { lift++; if ((l1 ? R : L).some(reactor)) lr++; }
+    });
+    out.push([`Security Gates at a lift (with a reactor across)`, `${lift} of ${sg.length} (${lr})`, lift < sg.length]);
+  }
+  if (tig.length > 1) {
+    const paired = tig.filter((r) => ring(r).some((t) => { const o = roomAt.get(t); return o && o !== r && kind(o) === "tig"; })).length;
+    out.push(["Interdictor Gates next to another", `${paired} of ${tig.length}`, paired < tig.length]);
+  }
+  return out;
 }
 function download(name, text, type) {
   const url = URL.createObjectURL(new Blob([text], { type }));
