@@ -34,8 +34,8 @@ jobs:
         continue-on-error: true
         run: |
           python3 tools/pixyship_fetch_layouts.py --top 100 --out build/top --delay 1
-      - name: Analyse top-100 layouts and calibrate the optimizer
-        # writes data/top_layouts.json (compact) and data/top_analysis.json (stats, patterns, weights)
+      - name: Analyse top-100 layouts and benchmark the optimizer
+        # writes data/top_layouts.json (compact) and data/top_analysis.json (stats, patterns, builds, power, gates)
         if: ${{ !inputs.game_data_only }}
         continue-on-error: true
         run: |
@@ -47,7 +47,9 @@ jobs:
       - name: Re-analyse the saved top-100 layouts with the new game data
         # game-data-only runs: the build and room-recommendation tables use ship and room levels
         if: ${{ inputs.game_data_only }}
-        run: python3 tools/analyze_top.py
+        continue-on-error: true
+        run: |
+          if [ -f data/top_layouts.json ]; then python3 tools/analyze_top.py; else echo "No saved top-100 layouts yet."; fi
       - name: Commit if changed
         run: |
           git config user.name "github-actions[bot]"

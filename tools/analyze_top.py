@@ -436,7 +436,7 @@ def ship_power(s, fam):
         ds = [d for d in fam.get(r["name"], []) if lvl is None or d[1] is None or d[1] <= lvl]
         if not ds:
             continue
-        d = max(ds)
+        d = max(ds, key=lambda d: (d[0], d[2] or 0, d[3] or 0))   # best level (minShip may be None)
         use += d[2] or 0
         make += d[3] or 0
         if d[2]:
@@ -507,9 +507,11 @@ def insights(ships):
                     hull_tiles=round(statistics.mean(len(s.inside) for s in group), 1),
                     fill=round(statistics.mean(fill), 3),
                     trophies=round(statistics.mean(s.lay.get("trophies") or 0 for s in group)))
-    out["tiers"] = [dict(label=lab, **summary(ships[a:b])) for lab, a, b in
+    # rank bands by ladder rank (not list position: a ship whose hull is unknown is missing from `ships`)
+    band = lambda a, b: [s for s in ships if a < s.lay["rank"] <= b]
+    out["tiers"] = [dict(label=lab, **summary(band(a, b))) for lab, a, b in
                     (("Top 10", 0, 10), ("Ranks 11-25", 10, 25), ("Ranks 26-50", 25, 50), ("Ranks 51-100", 50, 100))
-                    if ships[a:b]]
+                    if band(a, b)]
     # trophies against a few build measures (rank correlation, -1..1)
     def spearman(xs, ys):
         def rk(v):
@@ -547,11 +549,14 @@ def insights(ships):
     bands = (("Top 10", 0, 10), ("11-25", 10, 25), ("26-50", 25, 50), ("51-100", 50, 100))
     mix = []
     for lab, a, b in bands:
-        prim = Counter(weapon_pair(ship_profile(s)[0])[0] or "none" for s in ships[a:b])
-        mix.append(dict(label=lab, ships=len(ships[a:b]), primary=dict(prim)))
+        grp = band(a, b)
+        if not grp:
+            continue
+        prim = Counter(weapon_pair(ship_profile(s)[0])[0] or "none" for s in grp)
+        mix.append(dict(label=lab, ships=len(grp), primary=dict(prim)))
     out["weapon_mix"] = mix
     # rooms the top 10 run clearly more often than the rest (share of ships with the room)
-    top, rest = ships[:10], ships[10:]
+    top, rest = band(0, 10), [s for s in ships if s.lay["rank"] > 10]
     def share(group):
         c = Counter()
         for s in group:
@@ -949,7 +954,7 @@ def main():
         pass
     with open(out, "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, separators=(",", ":"))
-    print("Wrote data/top_layouts.json and data/top_analysis.json")
+    print(f"Wrote top_layouts.json and top_analysis.json in {a.out_dir}")
 
 
 if __name__ == "__main__":

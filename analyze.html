@@ -3,20 +3,22 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="How the top 100 Pixel Starships ladder players build their ships: builds, rooms, power, gate placement and layouts.">
+  <meta name="color-scheme" content="dark">
   <title>Top 100 Analysis</title>
   <link rel="stylesheet" href="css/style.css">
   <link rel="stylesheet" href="css/analyze.css">
 </head>
 <body>
   <header>
-    <nav class="topnav"><a href="index.html">Optimizer</a><a href="analyze.html" class="active">Top 100 analysis</a></nav>
+    <nav class="topnav" aria-label="Site"><a href="index.html">Optimizer</a><a href="analyze.html" class="active" aria-current="page">Top 100 analysis</a></nav>
     <h1>Top 100 ships</h1>
     <p id="subtitle">How the top 100 ladder players build their ships, and what the optimizer learns from them.</p>
   </header>
 
   <main class="single">
-    <div id="loadMsg" class="panel muted">Loading top-100 data...</div>
-    <nav class="pagetabs" id="pageTabs" hidden role="tablist">
+    <div id="loadMsg" class="panel muted" role="status" aria-live="polite">Loading top-100 data...</div>
+    <nav class="pagetabs" id="pageTabs" hidden role="tablist" aria-label="Top 100 analysis sections">
       <a href="#overview" role="tab" data-tab="overview">Overview</a>
       <a href="#builds" role="tab" data-tab="builds">Builds</a>
       <a href="#ships" role="tab" data-tab="ships">Ships & layouts</a>
@@ -42,7 +44,7 @@
     <section class="panel" id="secTrophy" hidden>
       <h2>What goes with more trophies</h2>
       <p class="muted">Rank correlation between trophies and each measure over the top 100 (+1 = always more trophies with more
-        of it, 0 = no link). The top 100 are close together, so these links are weak: read them as hints, not rules.</p>
+        of it, 0 = no link, -1 = always fewer). Bars reach the end at &plusmn;0.5. The top 100 are close together, so these links are weak: read them as hints, not rules.</p>
       <div id="trophyBars" class="dbars"></div>
     </section>
     </div>
