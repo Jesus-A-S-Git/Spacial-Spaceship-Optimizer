@@ -1,0 +1,59 @@
+/* Ship vs ship page (battle.html). Loaded after style.css and analyze.css. */
+:root { --sa: #4aa8ff; --sb: #e8894a; }
+.disclaimer { background: #2a2414; border: 1px solid #6b5520; color: #f3e2b5; border-radius: 8px; padding: 10px 12px; font-size: 13px; margin: 0 0 16px; }
+.disclaimer code { font-size: 12px; }
+.tag { display: inline-block; min-width: 20px; padding: 0 6px; border-radius: 4px; text-align: center; font-weight: 700; color: #04121f; font-size: 13px; }
+.tag.ta { background: var(--sa); }
+.tag.tb { background: var(--sb); }
+
+.pickers { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 12px; align-items: start; }
+.picker { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.picker label { font-weight: 600; }
+.picker select { width: 100%; background: #0c111b; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px; font: inherit; font-size: 14px; }
+.picker select:focus, .picker input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.picker.pa select { border-left: 3px solid var(--sa); }
+.picker.pb select { border-left: 3px solid var(--sb); }
+.vsbtns { display: flex; flex-direction: column; gap: 8px; padding-top: 28px; }
+.pickers .full { grid-column: 1 / -1; margin: 0; }
+
+.odds { margin: 8px 0; }
+.oddslabels { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; font-size: 14px; }
+.oddslabels b { font-size: 26px; line-height: 1; }
+.oddslabels .sa b { color: var(--sa); }
+.oddslabels .sb b { color: var(--sb); }
+.oddsbar { display: flex; height: 18px; border-radius: 6px; overflow: hidden; background: var(--track); }
+.oddsbar .fa { background: var(--sa); }
+.oddsbar .fb { background: var(--sb); border-left: 2px solid var(--bg); }
+#why { margin: 4px 0 0; padding-left: 20px; }
+#why li { margin: 3px 0; }
+#result h3 { font-size: 15px; margin: 12px 0 4px; }
+
+.ships { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 4px; }
+.ships .panel { min-width: 0; margin-bottom: 0; }
+.ships h3 { margin: 0 0 4px; font-size: 16px; overflow-wrap: anywhere; }
+.ships .layoutbox svg { width: 100%; }
+.ships + .legend { margin: 6px 0 16px; }
+
+table.cmp th, table.cmp td { vertical-align: top; }
+table.cmp th[scope=row] { font-weight: 500; }
+table.cmp th[scope=row] small { display: block; color: var(--muted); font-size: 11px; font-weight: 400; }
+table.cmp th.sub { padding-left: 20px; color: var(--muted); }
+table.cmp thead th { position: static; }
+table.cmp thead th.ca { color: var(--sa); }
+table.cmp thead th.cb { color: var(--sb); }
+table.cmp tr.grp th { color: var(--accent); text-transform: uppercase; letter-spacing: .05em; font-size: 11px; padding-top: 10px; position: static; }
+table.cmp td { white-space: nowrap; }
+table.cmp td.win { color: #8fd19e; font-weight: 600; }
+.vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+details.how { border-top: 0; }
+details.how ul { padding-left: 20px; }
+
+@media (max-width: 700px) {
+  .pickers { grid-template-columns: minmax(0, 1fr); }
+  .vsbtns { flex-direction: row; padding-top: 0; }
+  .vsbtns button { flex: 1; }
+  .ships { grid-template-columns: minmax(0, 1fr); }
+  .picker select { font-size: 15px; }
+  table.cmp td { white-space: normal; }
+}
+.topnav { flex-wrap: wrap; }
