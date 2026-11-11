@@ -75,6 +75,8 @@ import threading
 import time
 import sys
 from collections import Counter, defaultdict
+from functools import lru_cache
+import re
 from multiprocessing import Pool, Value
 
 try:                      # numpy is only needed for the optional --learn (GNN + RL) mode
@@ -319,6 +321,7 @@ RESOURCE_ROOMS = [
     # ("Storage", "S", 3, 2, 2),
 ]
 RESOURCE_ANYWHERE = True
+W_RES_OFF = 50.0        # penalty per resource room on ordinary tiles while the hull has resource space ('r')
 BONUS_SIZE = (3, 2)     # filler rooms placed wherever they fit after the search
 # --------------------------------------------------------------- END CONFIG -
 
@@ -339,10 +342,30 @@ def _t50_kind(room_type):
     return "combat"
 
 
+@lru_cache(maxsize=None)
+def rect_tiles(x, y, w, h):
+    """Tiles of a w x h rectangle, row by row. Cached: treat as read-only."""
+    return tuple([(xx, yy) for yy in range(y, y + h) for xx in range(x, x + w)])
+
+
+@lru_cache(maxsize=None)
+def floor_row(x, y, w, h):
+    """Bottom-row tiles of a w x h rectangle. Cached: treat as read-only."""
+    return tuple([(xx, y + h - 1) for xx in range(x, x + w)])
+
+
+@lru_cache(maxsize=None)
 def ring_of(x, y, w, h):
-    """Tiles orthogonally touching a w x h rectangle (corners excluded)."""
-    return ([(xx, y - 1) for xx in range(x, x + w)] + [(xx, y + h) for xx in range(x, x + w)]
-            + [(x - 1, yy) for yy in range(y, y + h)] + [(x + w, yy) for yy in range(y, y + h)])
+    """Tiles orthogonally touching a w x h rectangle (corners excluded). Cached: treat as read-only."""
+    return tuple([(xx, y - 1) for xx in range(x, x + w)] + [(xx, y + h) for xx in range(x, x + w)]
+                 + [(x - 1, yy) for yy in range(y, y + h)] + [(x + w, yy) for yy in range(y, y + h)])
+
+
+@lru_cache(maxsize=None)
+def ring_edge(x, y, w, h):
+    """How many tiles of ring_of(x, y, w, h) are off the hull (outside or not a hull tile)."""
+    ok = ok_set()
+    return sum(1 for t in ring_of(x, y, w, h) if t not in ok)
 
 
 def _pct(values, q):
@@ -537,6 +560,7 @@ GAIN = _build_gain_tables()
 NEIGH = ((1, 0), (-1, 0), (0, 1), (0, -1))
 ALL_TILES = [(x, y) for y in range(H) for x in range(W) if HULL[y][x] in "xr"]      # every hull tile
 RES_TILES = {(x, y) for (x, y) in ALL_TILES if HULL[y][x] == "r"}      # resource space
+RES_LIST = sorted(RES_TILES, key=lambda t: (t[1], t[0])) if RES_IDX else []
 ROOM_KIND = ["priority" if r in PRIORITY_SET else ("combat" if r < NC else "noncombat") for r in range(NR)]
 NNC = NR - NC
 HULL_WIDTH = max(x for x, _ in ALL_TILES) - min(x for x, _ in ALL_TILES) + 1
@@ -574,6 +598,17 @@ def ok_set():
     return _OK_SET
 
 
+_FREE_SET = None
+
+
+def _free_set():
+    """Hull tiles that are not resource space (same answer as free_tile)."""
+    global _FREE_SET
+    if _FREE_SET is None:
+        _FREE_SET = frozenset(t for t in ok_set() if t not in RES_TILES)
+    return _FREE_SET
+
+
 def free_tile(x, y):
     """Hull tile that is NOT resource space (lifts, vents, armor and filler live here)."""
     return 0 <= x < W and 0 <= y < H and OKG[y][x] and (x, y) not in RES_TILES
@@ -594,6 +629,18 @@ def rect_ok(x, y, w, h, r=None):
     return n == 0
 
 
+def on_resource(x, y, w, h):
+    """True if the rectangle lies entirely on resource space ('r' tiles). Assumes it is inside the grid."""
+    return bool(RES_TILES) and PR[y + h][x + w] - PR[y][x + w] - PR[y + h][x] + PR[y][x] == w * h
+
+
+def resource_off(pos):
+    """Resource rooms that sit on ordinary tiles although the hull has resource space."""
+    if not (RES_TILES and RES_IDX):
+        return 0
+    return sum(1 for r in RES_IDX if not on_resource(pos[r][0], pos[r][1], ROOMS[r][2], ROOMS[r][3]))
+
+
 def clone(st):
     return dict(pos=list(st["pos"]), lifts=list(st["lifts"]), vents=list(st["vents"]))
 
@@ -602,15 +649,16 @@ def clone(st):
 def occupancy(state):
     """(tiles: tile->room idx, lifts: set, vents: set). None if illegal."""
     tiles = {}
+    n = 0
     for r, (x, y) in enumerate(state["pos"]):
         w, h = ROOMS[r][2], ROOMS[r][3]
         if not rect_ok(x, y, w, h, r):
             return None
-        for yy in range(y, y + h):
-            for xx in range(x, x + w):
-                if (xx, yy) in tiles:
-                    return None
-                tiles[(xx, yy)] = r
+        rt = rect_tiles(x, y, w, h)
+        tiles.update(dict.fromkeys(rt, r))
+        n += len(rt)
+        if len(tiles) != n:              # two rooms overlap
+            return None
     lifts = set()
     for x, y0, y1 in state["lifts"]:
         for y in range(y0, y1 + 1):
@@ -719,20 +767,17 @@ def build_graph(walk, lifts, extra_nodes, vlinks):
     """
     nodes = set(lifts) | set(extra_nodes)
     adj = defaultdict(list)
-    for y in range(H):
-        last = None
-        for x in range(W):
-            t = (x, y)
-            if t not in walk:
-                last = None
-                continue
-            if t in nodes:
-                if last is not None:
-                    a = (last, y)
-                    d = x - last
-                    adj[a].append((t, d))
-                    adj[t].append((a, d))
-                last = x
+    # row by row, left to right: join each node to the next one in the same row when every tile between
+    # them is walkable
+    prev = None
+    for t in sorted((t for t in nodes if t in walk), key=_row_major):
+        if prev is not None and prev[1] == t[1]:
+            y = t[1]
+            if all((xx, y) in walk for xx in range(prev[0] + 1, t[0])):
+                d = t[0] - prev[0]
+                adj[prev].append((t, d))
+                adj[t].append((prev, d))
+        prev = t
     c = 1 + LIFT_COST
     for (x, y) in lifts:
         n = (x, y + 1)
@@ -753,6 +798,10 @@ def build_graph(walk, lifts, extra_nodes, vlinks):
     return adj
 
 
+def _row_major(t):
+    return (t[1], t[0])
+
+
 def dijkstra(src, adj):
     dist, par = {src: 0}, {}
     pq = [(0, src)]
@@ -766,6 +815,46 @@ def dijkstra(src, adj):
                 dist[v] = nd
                 par[v] = u
                 heapq.heappush(pq, (nd, v))
+    return dist, par
+
+
+def index_graph(adj):
+    """The node graph with integer node ids, numbered in sorted tile order (so heap ties break exactly as
+    with tile tuples): (nodes, id_of, neighbours)."""
+    nodes = sorted(adj)
+    idx = {t: k for k, t in enumerate(nodes)}
+    return nodes, idx, [[(idx[v], c) for v, c in adj[t]] for t in nodes]
+
+
+_INF = float("inf")
+_DOTS = re.compile(r"\.+")
+
+
+def dijkstra_idx(src, nbr, targets):
+    """dijkstra() on an index_graph, stopping once every node in `targets` (a set of ids) is settled.
+    Distances and parents of settled nodes are exactly those of the full search."""
+    dist = [_INF] * len(nbr)
+    par = [-1] * len(nbr)
+    dist[src] = 0
+    left = len(targets) - (src in targets)
+    if left <= 0:
+        return dist, par
+    pq = [(0, src)]
+    pop, push = heapq.heappop, heapq.heappush
+    while pq:
+        d, u = pop(pq)
+        if d > dist[u]:
+            continue
+        if u in targets and u != src:
+            left -= 1
+            if not left:
+                break
+        for v, c in nbr[u]:
+            nd = d + c
+            if nd < dist[v]:
+                dist[v] = nd
+                par[v] = u
+                push(pq, (nd, v))
     return dist, par
 
 
@@ -867,8 +956,7 @@ def floor_tiles(pos):
     f = set()
     for r in range(NR if WALK_NONCOMBAT else NC):
         x, y = pos[r]
-        for xx in range(x, x + ROOMS[r][2]):
-            f.add((xx, y + ROOMS[r][3] - 1))
+        f.update(floor_row(x, y, ROOMS[r][2], ROOMS[r][3]))
     return f
 
 
@@ -909,37 +997,71 @@ def near_combat(tiles):
     return near
 
 
-def armor_pick(tiles, lifts, vents, reserved, noarmor):
+def _near_combat(rings):
+    """Tiles outside the rooms that touch a combat room (near_combat without the rooms' own tiles: the same
+    answer for every tile that is not inside a room)."""
+    near = set()
+    for r in range(NC):
+        near.update(rings[r])
+    return near
+
+
+def armor_pick(tiles, lifts, vents, reserved, noarmor, pos=None):
     """Choose ARMOR_COUNT armor tiles by marginal score gain (lazy greedy). A tile's gain is the sum,
     over the rooms it touches, of that room's next-tile gain: big while a room is below its sweet
     spot, normal inside it, negative once it is above. Gains only shrink as rooms fill up, so lazy
     re-evaluation is exact. Returns ([(tile, gain)], number_of_candidate_tiles)."""
-    occ = set(tiles) | lifts | vents
     touch = defaultdict(list)
-    for (x, y), r in tiles.items():
-        if ROOMS[r][4] <= 0:
-            continue
-        for dx, dy in NEIGH:
-            t = (x + dx, y + dy)
-            if t not in occ and free_tile(*t) and t not in reserved and t not in noarmor:
-                touch[t].append(r)
-    cnt = defaultdict(int)
+    if pos is not None:              # same lists, from each room's outline (rooms in index order)
+        bad = None
+        for r in range(NR):
+            if ROOMS[r][4] <= 0:
+                continue
+            for t in ring_of(pos[r][0], pos[r][1], ROOMS[r][2], ROOMS[r][3]):
+                if t in touch:
+                    touch[t].append(r)
+                    continue
+                if bad is None:
+                    bad = set()
+                elif t in bad:
+                    continue
+                if t not in tiles and t not in lifts and t not in vents and t in _free_set() and t not in reserved and t not in noarmor:
+                    touch[t].append(r)
+                else:
+                    bad.add(t)
+    else:
+        occ = set(tiles) | lifts | vents
+        for (x, y), r in tiles.items():
+            if ROOMS[r][4] <= 0:
+                continue
+            for dx, dy in NEIGH:
+                t = (x + dx, y + dy)
+                if t not in occ and free_tile(*t) and t not in reserved and t not in noarmor:
+                    touch[t].append(r)
+    cnt = [0] * NR                   # armor so far per room, capped at 31 (the end of the gain tables)
+    G = GAIN
 
     def gain(t):
-        return sum(GAIN[r][min(cnt[r], 31)] for r in touch[t])
+        g = 0
+        for r in touch[t]:
+            g += G[r][cnt[r]]
+        return g
 
     heap = [(-gain(t), t[1], t[0], t) for t in touch]
     heapq.heapify(heap)
+    pop, push = heapq.heappop, heapq.heappush
     chosen = []
-    while heap and len(chosen) < ARMOR_COUNT:
-        _, _, _, t = heapq.heappop(heap)
+    need = ARMOR_COUNT
+    while heap and len(chosen) < need:
+        _, _, _, t = pop(heap)
         g = gain(t)
         if heap and g < -heap[0][0] - 1e-9:          # stale entry: re-queue with its fresh gain
-            heapq.heappush(heap, (-g, t[1], t[0], t))
+            push(heap, (-g, t[1], t[0], t))
             continue
         chosen.append((t, g))
         for r in touch[t]:
-            cnt[r] += 1
+            if cnt[r] < 31:
+                cnt[r] += 1
     return chosen, len(touch)
 
 
@@ -1051,29 +1173,42 @@ def gate_score(pos, tiles, lifts):
     return tot
 
 
-def pattern_score(pos, tiles):
+def pattern_score(pos, tiles, rings=None):
     """Learned top-ship patterns: touching room types (TAG_ADJ) plus edge-facing share by type (TAG_EDGE)."""
     if not (TAG_ADJ or TAG_EDGE):
         return 0.0
-    tags = _TAGS
+    pe_of, adjw = _pattern_tables()
     tot = 0.0
     for r in range(NR):
         x, y = pos[r]
-        ring = ring_of(x, y, ROOMS[r][2], ROOMS[r][3])
-        if TAG_EDGE:
-            pe = TAG_EDGE.get(tags[r])
-            if pe:
-                ok = ok_set()
-                tot += pe * sum(1 for t in ring if t not in ok) / len(ring)
+        w, h = ROOMS[r][2], ROOMS[r][3]
+        pe = pe_of[r]
+        if pe:
+            tot += pe * ring_edge(x, y, w, h) / (2 * (w + h))
         if TAG_ADJ:
             seen = set()
-            for t in ring:
+            row = adjw[r]
+            for t in (rings[r] if rings else ring_of(x, y, w, h)):
                 o = tiles.get(t, -1)
                 if o > r and o not in seen:
                     seen.add(o)
-                    a, b = tags[r], tags[o]
-                    tot += TAG_ADJ.get(a + "|" + b if a <= b else b + "|" + a, 0.0)
+                    tot += row[o]
     return tot
+
+
+_PATTERN_TABLES = None
+
+
+def _pattern_tables():
+    """Per room: its TAG_EDGE weight; per room pair: their TAG_ADJ weight (built once)."""
+    global _PATTERN_TABLES
+    if _PATTERN_TABLES is None:
+        tags = _TAGS
+        pe_of = [TAG_EDGE.get(tags[r]) if TAG_EDGE else None for r in range(NR)]
+        adjw = [[TAG_ADJ.get(a + "|" + b if a <= b else b + "|" + a, 0.0) for b in (tags[o] for o in range(NR))]
+                for a in (tags[r] for r in range(NR))]
+        _PATTERN_TABLES = (pe_of, adjw)
+    return _PATTERN_TABLES
 
 
 def cheap_score(state):
@@ -1173,12 +1308,27 @@ def init_state_decks(rng, deadline=None):
             continue
         rng.shuffle(combat)
         rng.shuffle(other)
+        pos = [None] * NR
+        deck_rooms = combat + other
+        if RES_TILES and RES_IDX:
+            # resource rooms go into resource space first (they are the only rooms allowed there)
+            taken = set()
+            for r in sorted(RES_IDX, key=lambda r: -ROOMS[r][2] * ROOMS[r][3]):
+                w, h = ROOMS[r][2], ROOMS[r][3]
+                spot = next(((x, y) for y in range(H - h, -1, -1) for x in range(W - w + 1)
+                             if rect_ok(x, y, w, h, r) and on_resource(x, y, w, h)
+                             and not any(t in taken for t in rect_tiles(x, y, w, h))), None)
+                if spot:
+                    pos[r] = spot
+                    taken.update(rect_tiles(spot[0], spot[1], w, h))
+            if not RESOURCE_ANYWHERE and any(pos[r] is None for r in RES_IDX):
+                return None                  # resource space too small for the resource rooms
+            deck_rooms = [r for r in deck_rooms if pos[r] is None]
         rows, widths = [[] for _ in floors], [0] * len(floors)
-        for r in combat + other:
+        for r in deck_rooms:
             d = min(range(len(floors)), key=lambda k: widths[k] / max(1, cap[floors[k]]) + rng.random() * 0.03)
             rows[d].append(r)
             widths[d] += ROOMS[r][2]
-        pos = [None] * NR
         okk = True
         for d, floor in enumerate(floors):
             x = 0
@@ -1222,6 +1372,8 @@ def init_state_packed(rng, deadline=None):
             if not spots:
                 okk = False
                 break
+            if r in RES_IDX and RES_TILES:                  # resource rooms: resource space first
+                spots = [t for t in spots if on_resource(t[0], t[1], w, h)] or spots
             x, y = spots[rng.randrange(min(len(spots), 4))]
             pos[r] = (x, y)
             used.update((xx, yy) for yy in range(y, y + h) for xx in range(x, x + w))
@@ -1282,6 +1434,22 @@ def legalize(s, anchors, rng, max_iter=60):
     for vx, vy in s["vents"]:
         fixed[(vx, vy)] = (vx, vy, 1, 1)
 
+    # fast path: nothing overlaps and every room is on legal tiles (the usual case after a swap) - the full
+    # pass below would find no conflict either
+    seen, n = {}, 0
+    for r, (x, y) in enumerate(pos):
+        w, h = ROOMS[r][2], ROOMS[r][3]
+        if not rect_ok(x, y, w, h, r):
+            break
+        rt = rect_tiles(x, y, w, h)
+        seen.update(dict.fromkeys(rt))
+        n += len(rt)
+        if len(seen) != n:
+            break
+    else:
+        if not any(t in seen for t in fixed):
+            return True
+
     def free_spot(r, x, y):
         w, h = ROOMS[r][2], ROOMS[r][3]
         return rect_ok(x, y, w, h, r) and not any(
@@ -1291,7 +1459,7 @@ def legalize(s, anchors, rng, max_iter=60):
 
     def tiles_of(r):
         x, y = pos[r]
-        return [(xx, yy) for yy in range(y, y + ROOMS[r][3]) for xx in range(x, x + ROOMS[r][2])]
+        return rect_tiles(x, y, ROOMS[r][2], ROOMS[r][3])
 
     def first_conflict(r):
         """(blocker_room, blocker_rect) for room r against fixed tiles and LOWER-numbered rooms, in tile
@@ -1487,7 +1655,10 @@ def apply_op(st, rng, op, combat_only=False, node=None):
         anchors = {r}
     elif op == 2:                     # broad relocation to explore different hull regions
         r = nr if nr is not None else rng.choice(pool)
-        pos[r] = (rng.randrange(W), rng.randrange(H))
+        if RES_LIST and r in RES_IDX and rng.random() < 0.7:     # resource rooms: mostly into resource space
+            pos[r] = rng.choice(RES_LIST)
+        else:
+            pos[r] = (rng.randrange(W), rng.randrange(H))
         anchors = {r}
     elif op == 3:                     # swap two rooms (mostly equal-size ones, which can never overlap)
         a = nr if nr is not None else rng.choice(pool)
@@ -1753,6 +1924,16 @@ def anneal(rng, iters, start=None, t0=24.0, weights=None, phase_frac=0.4, policy
     return best, bs, att, succ
 
 
+_BASE_GRID = None
+
+
+def _base_grid():
+    global _BASE_GRID
+    if _BASE_GRID is None:
+        _BASE_GRID = [["#" if c == "." else ("~" if c == "r" else ".") for c in r] for r in HULL]
+    return _BASE_GRID
+
+
 def finalize(state):
     occ = occupancy(state)
     if occ is None:
@@ -1762,12 +1943,24 @@ def finalize(state):
     # only the shortest-path tree from room 0 is needed here (it marks the corridor tiles)
     walk0 = walk_set(pos, lifts, vents, set())
     adj0, reps, _ = make_graph(pos, lifts, vents, tiles, walk0)
-    par = dijkstra(reps[0], adj0)[1] if NC else None
+    par = None
+    if NC:
+        nodes0, idx0, nbr0 = index_graph(adj0)
+        par = {}
+        s0 = idx0.get(reps[0])
+        if s0 is not None:
+            tg = {idx0[t] for t in reps[1:] if t in idx0}
+            _, pl = dijkstra_idx(s0, nbr0, tg)
+            for k in tg:                       # parent links along the paths to every reachable room
+                while pl[k] >= 0 and nodes0[k] not in par:
+                    par[nodes0[k]] = nodes0[pl[k]]
+                    k = pl[k]
     reserved = corridor_tiles(par, reps, tiles, lifts, vents)
-    halo = noncombat_halo(tiles)
-    top, _ = armor_pick(tiles, lifts, vents, reserved, halo)
+    rings = [ring_of(x, y, ROOMS[r][2], ROOMS[r][3]) for r, (x, y) in enumerate(pos)]
+    halo = {t for r in range(NC, NR) for t in rings[r] if t not in tiles}       # = noncombat_halo(tiles)
+    top, _ = armor_pick(tiles, lifts, vents, reserved, halo, pos)
     armor = [t for t, _ in top]
-    g = [["#" if c == "." else ("~" if c == "r" else ".") for c in r] for r in HULL]
+    g = [row[:] for row in _base_grid()]
     out = []
     for r, (x, y) in enumerate(pos):
         n, s, w, h, _, comb = ROOMS[r]
@@ -1783,7 +1976,7 @@ def finalize(state):
     if len(armor) < ARMOR_COUNT:
         taken = set(armor)
         free = [(x, y) for (x, y) in ALL_TILES if g[y][x] == "." and (x, y) not in taken and (x, y) not in reserved]
-        near = near_c = near_combat(tiles)
+        near = near_c = _near_combat(rings)
         # prefer tiles that at least touch a combat room, and avoid non-combat rooms where possible
         free.sort(key=lambda t: (t not in near, t in halo))
         armor += free[: ARMOR_COUNT - len(armor)]
@@ -1798,12 +1991,9 @@ def finalize(state):
             lift_touch_bad += 1
 
     def adj_bad(x, y, w, h):
-        for yy in range(y - 1, y + h + 1):
-            for xx in range(x - 1, x + w + 1):
-                inside = x <= xx < x + w and y <= yy < y + h
-                corner = xx in (x - 1, x + w) and yy in (y - 1, y + h)
-                if not inside and not corner and 0 <= xx < W and 0 <= yy < H and g[yy][xx] in "AL":
-                    return True
+        for xx, yy in ring_of(x, y, w, h):
+            if 0 <= xx < W and 0 <= yy < H and g[yy][xx] in "AL":
+                return True
         return False
 
     def tuck(x, y, w, h):
@@ -1880,54 +2070,65 @@ def finalize(state):
                 break
 
     long_extra = 0
+    dots = []                                  # empty tiles (walkable below)
     for y in range(H):
-        run = 0
-        for x in range(W + 1):
-            if x < W and g[y][x] == ".":
-                run += 1
-            else:
-                long_extra += max(0, run - MAX_EMPTY_RUN)
-                run = 0
+        for mm in _DOTS.finditer("".join(g[y])):
+            a, b = mm.span()
+            long_extra += max(0, b - a - MAX_EMPTY_RUN)
+            dots.extend((x, y) for x in range(a, b))
     iso = sum(1 for n, s, w, h, x, y, c in out if not c and adj_bad(x, y, w, h))
 
     # True walking metrics on the finished grid (armor, fillers and non-combat rooms now block)
     walk = set(lifts)
     walk |= floor_tiles(pos)
-    walk |= {(x, y) for y in range(H) for x in range(W) if g[y][x] == "."}
+    walk.update(dots)
     adj, reps, vl = make_graph(pos, lifts, vents, tiles, walk)
-    dists, parents_of = [], []
-    total = cnt = unreach = 0
-    for i in range(NC):
-        d, pr = dijkstra(reps[i], adj)
-        dists.append(d)
-        parents_of.append(pr)
-        for j in range(i + 1, NC):
-            dj = d.get(reps[j])
-            if dj is None:
-                unreach += 1
-            else:
-                total += dj
-                cnt += 1
-    avg = total / cnt if cnt else 99.0
+    nodes, idx, nbr = index_graph(adj)
+    ri = [idx.get(t) for t in reps]
     cr = corner_rooms(pos)
-    cmax, cavg = corner_stats({i: dists[i] for i in cr}, reps, cr)
-
-    # Estimate lift traffic by reconstructing each combat-room pair's shortest path.
-    # Count vertical transitions in each lift column, then penalize imbalanced use.
+    crs = set(cr)
+    cr_ids = {ri[c] for c in cr if ri[c] is not None}
     lift_columns = sorted({x for x, _, _ in state["lifts"]})
     lift_usage = {x: 0 for x in lift_columns}
+    # lift column of each node (None if not a lift tile) and its row, for counting vertical lift steps
+    lcol = [t[0] if t in lifts else None for t in nodes]
+    corner_d = {}
+    total = cnt = unreach = 0
     for i in range(NC):
-        parents = parents_of[i]                       # same shortest-path trees as above
+        si = ri[i]
+        if si is None:                      # room anchor joined to nothing: every other room unreachable
+            unreach += NC - 1 - i
+            if i in crs:
+                corner_d[i] = {}
+            continue
+        tg = {ri[j] for j in range(i + 1, NC) if ri[j] is not None}
+        if i in crs:
+            tg |= cr_ids
+        d, pr = dijkstra_idx(si, nbr, tg)
+        if i in crs:
+            corner_d[i] = {reps[c]: d[ri[c]] for c in cr if ri[c] is not None and d[ri[c]] < _INF}
         for j in range(i + 1, NC):
-            target = reps[j]
-            if target not in parents and target != reps[i]:
+            tj = ri[j]
+            dj = d[tj] if tj is not None else _INF
+            if dj == _INF:
+                unreach += 1
                 continue
-            node = target
-            while node != reps[i] and node in parents:
-                prev = parents[node]
-                if prev in lifts and node in lifts and prev[0] == node[0] and prev[1] != node[1]:
-                    lift_usage[prev[0]] = lift_usage.get(prev[0], 0) + 1
+            total += dj
+            cnt += 1
+            # Estimate lift traffic by reconstructing each combat-room pair's shortest path: count
+            # vertical transitions in each lift column (penalized below when one lift is overused).
+            node = tj
+            while node != si:
+                prev = pr[node]
+                if prev < 0:
+                    break
+                lc = lcol[prev]
+                if lc is not None and lc == lcol[node] and nodes[prev][1] != nodes[node][1]:
+                    lift_usage[lc] = lift_usage.get(lc, 0) + 1
                 node = prev
+    avg = total / cnt if cnt else 99.0
+    cmax, cavg = corner_stats(corner_d, reps, cr)
+
     traffic_total = sum(lift_usage.values())
     if len(lift_usage) > 1 and traffic_total:
         shares = [v / traffic_total for v in lift_usage.values()]
@@ -1938,8 +2139,7 @@ def finalize(state):
 
     # Empty interior cells not reserved for walking are genuinely underused space.
     # Required corridors stay exempt so the optimizer doesn't fill in its own routes.
-    empty_unused = sum(1 for y in range(H) for x in range(W)
-                       if g[y][x] == "." and (x, y) not in reserved)
+    empty_unused = len(dots) - sum(1 for t in reserved if g[t[1]][t[0]] == ".")
     # Armor touching each room, judged against that room's sweet-spot range.
     touch = Counter()
     for x, y in armor:
@@ -1965,14 +2165,15 @@ def finalize(state):
             if pref:
                 side_bonus += W_SIDE * pref * 2.0 * ((pos[r][0] + ROOMS[r][2] / 2.0) / W - 0.5)
     if near_c is None:
-        near_c = near_combat(tiles)
+        near_c = _near_combat(rings)
     floating = sum(1 for t in armor if t not in near_c)
     spread = priority_spread(pos)
     vpen = vent_penalty(vl, lifts)
     unarmored_rooms = [r for r in range(NC) if touch[r] == 0]
     unarmored_priority = sum(1 for r in unarmored_rooms if r in PRIORITY_SET)
     center_dist = center_distance(pos)
-    pattern = pattern_score(pos, tiles) if W_PATTERN else 0.0
+    res_off = resource_off(pos)
+    pattern = pattern_score(pos, tiles, rings) if W_PATTERN else 0.0
     boosted = boost_count(pos, tiles)
     gate = gate_score(pos, tiles, lifts) if W_GATE else 0.0
     # Top-50 lessons: outer shell of non-combat rooms, non-combat rooms grouped, lifts spaced like top ships
@@ -1984,8 +2185,8 @@ def finalize(state):
         pref = TOP50["edge_pref"]
         for r, (x, y) in enumerate(pos):
             k = ROOM_KIND[r]
-            ring = ring_of(x, y, ROOMS[r][2], ROOMS[r][3])
-            e = sum(1 for t in ring if t not in ok_set())
+            ring = rings[r]
+            e = ring_edge(x, y, ROOMS[r][2], ROOMS[r][3])
             edge_tiles[k] += e
             ring_tiles[k] += len(ring)
             shell += pref[k] * e
@@ -2001,6 +2202,7 @@ def finalize(state):
              - W_VENT * vpen - W_FLOAT * floating - W_CORNER * 0.5 * (cmax + cavg) + W_SPREAD * spread
              - W_EMPTY * empty_unused - W_LIFT_BALANCE * lift_balance_pen
              - W_LIFT_COUNT * len(state["lifts"])
+             - W_RES_OFF * res_off
              + side_bonus
              - W_CENTER * center_dist
              + W_PATTERN * pattern
@@ -2019,7 +2221,7 @@ def finalize(state):
                 shell=shell, nc_alone=nc_alone, lift_density_pen=lift_density_pen,
                 edge_tiles=dict(edge_tiles), ring_tiles=dict(ring_tiles),
                 center_dist=center_dist, center_point=combat_center(pos), pattern=pattern,
-                boosted=boosted, gate=gate)
+                boosted=boosted, gate=gate, res_off=res_off)
     return score, g, info
 
 
@@ -2737,14 +2939,15 @@ def final_touch(st, res, rng, deadline=None):
     if deadline:
         st, res = swap_polish(st, res, deadline, rng=rng)
     if CONNECT_ALL:
-        st, res = repair_connections(st, res, rng)
+        st, res = repair_connections(st, res, rng, moves=True)
     if st["vents"]:
         st, res = prune_vents(st, res)
     return st, res
 
 
-def cut_off(state):
-    """Combat rooms outside the biggest connected group (0 = every combat room reaches every other)."""
+def cut_off(state, want_rooms=False):
+    """Combat rooms outside the biggest connected group (0 = every combat room reaches every other).
+    want_rooms: the list of those rooms instead of their number."""
     occ = occupancy(state)
     if occ is None:
         return None
@@ -2767,11 +2970,68 @@ def cut_off(state):
                     stack.append(v)
     for rp in reps:
         sizes[comp[rp]] += 1
+    if want_rooms:
+        main = max(range(len(sizes)), key=lambda k: sizes[k]) if sizes else -1
+        return [r for r, rp in enumerate(reps) if comp[rp] != main]
     return len(reps) - max(sizes) if sizes else 0
 
 
-def repair_connections(st, res, rng, rounds=12):
-    """CONNECT_ALL: while combat rooms are cut off, add the vent or lift that reconnects the most."""
+def gap_slides(st, max_gap=3):
+    """Layouts that close one short gap in a floor row: a room and everything beyond it on its rows slide
+    sideways until the room touches its neighbour on the same floor row (crew only cross between rooms along
+    touching floors, lifts and vents). Only legal slides are returned."""
+    pos = st["pos"]
+    floor = [pos[r][1] + ROOMS[r][3] - 1 for r in range(NR)]
+    out = []
+    seen = set()
+    for r in range(NR):
+        x, y = pos[r]
+        w, h = ROOMS[r][2], ROOMS[r][3]
+        for side in (-1, 1):
+            # nearest room on the same floor row, on this side
+            best = None
+            for q in range(NR):
+                if q == r or floor[q] != floor[r]:
+                    continue
+                gap = x - (pos[q][0] + ROOMS[q][2]) if side < 0 else pos[q][0] - (x + w)
+                if 1 <= gap <= max_gap and (best is None or gap < best):
+                    best = gap
+            if best is None:
+                continue
+            d = side * best
+            # what moves: r alone; r and the rooms joined to it beyond (touching, chain by chain); or r and
+            # everything beyond it on its rows
+            chain = {r}
+            grow = True
+            while grow:
+                grow = False
+                for q in range(NR):
+                    if q in chain:
+                        continue
+                    for c in chain:
+                        if (pos[q][1] < pos[c][1] + ROOMS[c][3] and pos[q][1] + ROOMS[q][3] > pos[c][1]
+                                and (pos[q][0] == pos[c][0] + ROOMS[c][2] if side < 0 else pos[q][0] + ROOMS[q][2] == pos[c][0])):
+                            chain.add(q)
+                            grow = True
+                            break
+            beyond = {q for q in range(NR) if pos[q][1] < y + h and pos[q][1] + ROOMS[q][3] > y
+                      and (pos[q][0] >= x if side < 0 else pos[q][0] <= x)}
+            for group in ({r}, chain, beyond):
+                key = (tuple(sorted(group)), d)
+                if key in seen:
+                    continue
+                seen.add(key)
+                new = [(px + d, py) if q in group else (px, py) for q, (px, py) in enumerate(pos)]
+                cand = trim_lifts(dict(pos=new, lifts=st["lifts"], vents=st["vents"]))
+                if cand and occupancy(cand) is not None:
+                    out.append(cand)
+    return out
+
+
+def repair_connections(st, res, rng, rounds=12, moves=False):
+    """CONNECT_ALL: while combat rooms are cut off, add the vent or lift that reconnects the most.
+    moves=True also tries closing short floor gaps (gap_slides) and small moves of each cut-off room: slower,
+    used for the final clean-up."""
     cur, cut = st, cut_off(st)
     for _ in range(rounds):
         if not cut:
@@ -2786,11 +3046,26 @@ def repair_connections(st, res, rng, rounds=12):
                 if lf and lf not in seen:
                     seen.add(lf)
                     cands.append(dict(pos=cur["pos"], lifts=list(cur["lifts"]) + [lf], vents=cur["vents"]))
+        for r in (cut_off(cur, True) or ()) if moves else ():          # cut-off rooms: small moves of the room alone
+            x0, y0 = cur["pos"][r]
+            for dy in (0, -1, 1, -2, 2):
+                for dx in (0, -1, 1, -2, 2, -3, 3):
+                    if dx or dy:
+                        pos = list(cur["pos"])
+                        pos[r] = (x0 + dx, y0 + dy)
+                        c = trim_lifts(dict(pos=pos, lifts=cur["lifts"], vents=cur["vents"]))
+                        if c and occupancy(c) is not None:
+                            cands.append(c)
         best_c, best_cut = None, cut
         for c in cands:
             k = cut_off(c)
             if k is not None and k < best_cut:
                 best_c, best_cut = c, k
+        if best_c is None and moves:                   # nothing simpler helps: close a gap in a floor row
+            for c in gap_slides(cur):
+                k = cut_off(c)
+                if k is not None and k < best_cut:
+                    best_c, best_cut = c, k
         if best_c is None:
             break
         cur, cut = best_c, best_cut
@@ -2813,7 +3088,7 @@ def run_restart(args):
         return seed, float("-inf"), None, [0] * NOPS, [0] * NOPS, None
     st, res, a2, s2 = polish(st, rng, steps, weights, policy=policy)
     if res and CONNECT_ALL:
-        st, res = repair_connections(st, res, rng)
+        st, res = repair_connections(st, res, rng, moves=True)
     if res and st["vents"]:
         st, res = prune_vents(st, res)
     att = [x + y for x, y in zip(a1, a2)]

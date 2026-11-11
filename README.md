@@ -141,8 +141,9 @@ optimizer learned:
   cut-off combat rooms are reconnected, and vents that do not help are removed. A vent passage only counts if it
   serves a combat room or a lift: a bedroom-to-bedroom vent is always removed.
 * **Connect every combat room** (*Armor, lifts and vents*, on by default; optimizer `CONNECT_ALL`, section 14): after
-  each search the optimizer adds the vent or lift that reconnects the most cut-off combat rooms, until all are
-  reachable (if the hull, vent count and lift count allow it).
+  each search the optimizer adds the vent or lift, or makes the small move of a cut-off room, that reconnects the
+  most cut-off combat rooms; when none helps, it closes a short gap in a floor row by sliding rooms sideways. This
+  repeats until all are reachable (if the hull, vent count and lift count allow it).
 
 ## More on the Top 100 page
 
@@ -192,16 +193,30 @@ engine, then compare the changed engine against it. `--restarts` gives every shi
 (instead of seconds), so the numbers are the same on a busy or an idle machine and only change when the engine does:
 
 ```
-python3 tools/benchmark_top.py --ships 8 --restarts 6 --configs top,top+templates --save /tmp/base.json
+export PYTHONHASHSEED=0
+python3 tools/benchmark_top.py --ships 8 --restarts 6 --seed 1,2,3 --configs top,top+templates --jobs 4 --save /tmp/base.json
 # ... change the engine ...
-python3 tools/benchmark_top.py --ships 8 --restarts 6 --configs top,top+templates --compare /tmp/base.json
+python3 tools/benchmark_top.py --ships 8 --restarts 6 --seed 1,2,3 --configs top,top+templates --jobs 4 --compare /tmp/base.json
 ```
 
 `--compare` prints the score, armor and cut-off rooms per ship (before / after) and ends with `RESULT: not worse
 than the baseline`, or `RESULT: REGRESSION` and exit status 1 when the mean score or armor drops by more than
-`--tolerance` (default 1%) or more combat rooms are cut off. Keep a change only when it is not worse. For changes
-that are about speed (more search in the same time, as on the page), also compare in time mode (`--seconds 45`,
-one page search round) and run the old engine (`BENCH_SRC=old_ship_layout_finder.py`) at the same time as the new one.
+`--tolerance` (default 1%) or more combat rooms are cut off. Keep a change only when it is not worse.
+
+- `--seed 1,2,3` runs every ship once per seed. Any change to the search moves single ships a lot (hundreds of
+  points either way), so one seed alone says little; three seeds (24 runs) is the minimum for a search change.
+  A pure speed-up must give exactly the same numbers.
+- `--jobs 4` runs that many ships at once (one process each, same results as one at a time).
+- `--only 8,14` runs only those ranks (for looking into one ship).
+- Changes that are about speed (more search in the same time, as on the page) also need time mode: run the old
+  engine (`BENCH_SRC=old_ship_layout_finder.py`) and the new one at the same time, each with half the cores, e.g.
+  `--seconds 45 --rounds 2 --jobs 2`. `--rounds` runs like the page: rounds of `--seconds`, each continuing from
+  the best layouts found so far.
+
+Resource space: only resource rooms may sit on `r` tiles (lifts, vents, armor and filler never do), and a
+resource room never straddles `r` and ordinary tiles. When the hull has `r` tiles, every resource room on
+ordinary tiles costs `W_RES_OFF` (default 50), and the search, the starting layouts and the deck / top-100
+starts put resource rooms on `r` tiles first.
 
 ## Ship vs ship (mock win rate)
 
