@@ -4,6 +4,8 @@
     python3 grab_hull.py --list                       # list ship names found
     python3 grab_hull.py "Ship Name"                  # writes hull_<name>.txt and prints it
     python3 grab_hull.py "Ship Name" --source ships.json
+    python3 grab_hull.py "Doom Sphere Extended"       # Extended hulls: tiles added to the base hull become 'r'
+    python3 grab_hull.py "Doom Sphere Extended" --no-resource   # ...or keep them as plain 'x'
     python3 ship_layout_optimizer_user.py --hull-file hull_<name>.txt
 
 By default it asks the official Pixel Starships game API for all ship designs (the same public data
@@ -81,11 +83,98 @@ def to_rows(e):
         return ["".join("x" if mask[y * c + x] not in "0.-" else "." for x in range(c)) for y in range(r)]
     return None
 
-def show(e):
+EXT_RE = re.compile(r"\s+extended\s*$", re.I)
+
+
+def level_of(e):
+    lv = pick(e, "shiplevel", "level")
+    return int(lv) if str(lv or "").isdigit() else None
+
+
+def align_inside(base, ext):
+    """Every offset (dy, dx) that puts all usable base tiles on usable ext tiles."""
+    E = {(y, x) for y, r in enumerate(ext) for x, c in enumerate(r) if c != "."}
+    B = [(y, x) for y, r in enumerate(base) for x, c in enumerate(r) if c != "."]
+    if not B:
+        return []
+    return [(ey - B[0][0], ex - B[0][1]) for ey, ex in sorted(E)
+            if all((y + ey - B[0][0], x + ex - B[0][1]) in E for y, x in B)]
+
+
+def extended_resources(e, ents):
+    """An Extended hull is its base hull plus extra tiles, and in the game those extra tiles are resource space.
+    Finds the base design (same name without " Extended", same ship level when there is one), aligns the grids and
+    returns (rows with the extra tiles as 'r', info dict) or (None, reason) when it cannot tell."""
+    name, rows, level = name_of(e), to_rows(e), level_of(e)
+    if not EXT_RE.search(name):
+        return None, "not an Extended hull"
+    base_label = EXT_RE.sub("", name).strip()
+    cands = []
+    for b in ents:
+        if b is e or name_of(b).strip().lower() != base_label.lower():
+            continue
+        try:
+            brows = to_rows(b)
+        except SystemExit:
+            continue
+        if brows and any("x" in r for r in brows) and all(brows != c[1] for c in cands):
+            cands.append((b, brows))
+    if not cands:
+        return None, f'no base hull named "{base_label}" in the ship list'
+    same = [c for c in cands if level is not None and level_of(c[0]) == level]
+    fits, ambiguous = [], 0
+    for b, brows in same or cands:
+        offs = align_inside(brows, rows)
+        if not offs:
+            continue
+        # several positions fit (e.g. a plain rectangle): the game draws both grids from the same corner, so take (0, 0)
+        off = offs[0] if len(offs) == 1 else ((0, 0) if (0, 0) in offs else None)
+        if off is None:
+            ambiguous = len(offs)
+            continue
+        def base_has(y, x):
+            by, bx = y - off[0], x - off[1]
+            return 0 <= by < len(brows) and 0 <= bx < len(brows[by]) and brows[by][bx] != "."
+        out = ["".join("r" if c == "x" and not base_has(y, x) else c for x, c in enumerate(r)) for y, r in enumerate(rows)]
+        fits.append((sum(r.count("x") for r in brows), b, off, out))
+    if not fits:
+        if ambiguous:
+            return None, f"the {base_label} hull fits inside the Extended one in {ambiguous} places, so it is unclear which tiles were added"
+        return None, f"the {base_label} hull{'' if same else ' (any level)'} does not fit inside the Extended hull's tiles"
+    fits.sort(key=lambda f: -f[0])
+    tiles, b, off, out = fits[0]
+    if any(f[0] == tiles and f[3] != out for f in fits[1:]):
+        return None, f"several {base_label} hulls match equally well and mark different tiles"
+    count = sum(r.count("r") for r in out)
+    if not count:
+        return None, f"the Extended hull adds no tiles to {base_label}"
+    warn = ""
+    if not same and level is not None and level_of(b) not in (None, level):
+        warn = (f"no level {level} {base_label} in the ship list, so the level {level_of(b)} one was used: "
+                f"tiles the level {level} upgrade added may be marked too. Check the grid.")
+    return out, {"count": count, "base": name_of(b), "base_level": level_of(b), "offset": off, "warn": warn}
+
+
+def show(e, ents=(), resources=True):
     rows = to_rows(e)
     if not rows:
         print(f"Found '{name_of(e)}' but no recognisable grid. Fields: {', '.join(e.keys())}. Try --dump.")
         return
+    note = "(resource space: change some 'x' to 'r' by hand if you want it)"
+    if EXT_RE.search(name_of(e)):
+        if not resources:
+            note = "(Extended hull: resource tiles not marked because of --no-resource)"
+        else:
+            marked, info = extended_resources(e, ents)
+            if marked:
+                rows = marked
+                note = (f"({info['count']} resource tiles marked 'r' (added by the Extended version of {info['base']}"
+                        + (f", level {info['base_level']}" if info["base_level"] is not None else "")
+                        + "). Use --no-resource to keep them as plain 'x'.)")
+                if info["warn"]:
+                    note += "\nWarning: " + info["warn"]
+            else:
+                note = f"(Extended hull, but resource tiles were not marked: {info}. Change some 'x' to 'r' by hand.)"
     out = "hull_" + re.sub(r"\W+", "_", name_of(e)).strip("_").lower() + ".txt"
     open(out, "w").write("\n".join(rows) + "\n")
     print(f"\n=== {name_of(e)}  ({len(rows[0])} x {len(rows)}) ===")
@@ -94,7 +183,7 @@ def show(e):
     print("\nOr paste this into DEFAULT_HULL in the optimizer:\nDEFAULT_HULL = [")
     for y, r in enumerate(rows):
         print(f'    "{r}",  # y{y}')
-    print("]\n(resource space: change some 'x' to 'r' by hand if you want it)\n")
+    print("]\n" + note + "\n")
 
 
 def main():
@@ -103,6 +192,8 @@ def main():
     ap.add_argument("--source", default="official", help="official (default), a URL, or a saved .json/.xml file")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--dump", action="store_true", help="print the raw entry instead of converting")
+    ap.add_argument("--no-resource", action="store_true",
+                    help="Extended hulls: do not mark the tiles added to the base hull as resource space 'r'")
     a = ap.parse_args()
     print("Loading ship designs...")
     ents = entries(load(a.source))
@@ -128,9 +219,9 @@ def main():
             pick_ = input("Number to use (blank to search again): ").strip()
             if pick_.isdigit() and 1 <= int(pick_) <= len(hit):
                 e = hit[int(pick_) - 1]
-                print(json.dumps(e, indent=1)[:4000]) if a.dump else show(e)
+                print(json.dumps(e, indent=1)[:4000]) if a.dump else show(e, ents, not a.no_resource)
         else:
-            print(json.dumps(hit[0], indent=1)[:4000]) if a.dump else show(hit[0])
+            print(json.dumps(hit[0], indent=1)[:4000]) if a.dump else show(hit[0], ents, not a.no_resource)
         if a.name:
             return
         name = None
