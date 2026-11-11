@@ -228,19 +228,28 @@ side-by-side breakdown and both layouts. Links keep the pair (`battle.html?a=r3&
 modelled. Each ship gets its rooms at the best level a level-14 ship can build (`data/rooms.json`). Weapons fire about every
 10 s with random timing; damage grows with the room's power, the ship's power made vs needed (full output at the top-100
 median, `recommend.power_ratio`) and boosters. Shields (pool = rooms' capacity, regen = shield power) absorb lasers, cannons and
-missiles; engines / anti-air / teleport gates stop missiles / fighters / boarding; shots hit a random room and are reduced by the
+missiles. Each weapon type has a counter with a stopping capacity that refills every volley (`COUNTER`, `GATE_POWER`): engines
+stop missiles, anti-air stops hangar craft, Interdictor Gates / Repulsors stop boarders, so a few missiles into many engines are
+almost all stopped while a big missile load swamps a few engines. Traps (Security Gate, Disintegrator Gate, gas traps) cut the
+damage of boarders that land, and boarders ignore shields and armor. The **Weapon matchups** table shows, per weapon type,
+how much of its damage the enemy's counter stopped. Other shots hit a random room and are reduced by the
 armor touching it (armor level % x share of the room's outline). Knocked-out rooms stop working. Hull HP is the same for
 every ship (not in the data), fights last up to 3 minutes, and each side's damage is scaled by a random +-25% per fight for
 what is not modelled. 2000 fights per match-up. All assumed values are in one `BATTLE_CONSTANTS` block at the top of `js/battle.js`;
 the model has no DOM dependency, so `node -e 'const B=require("./js/battle.js")'` can run it.
 
 Checks (Node, all 4950 top-100 pairs, 200 fights each): a ship against itself 49.8% (single pairs at 2000 fights: 48-53%).
-The better-ranked ship wins only **48%** of pairs (48% also when the ranks are 50+ apart). Sweeping armor, shield regen,
-interception, room HP, cloak and per-weapon multipliers (x0.5 to x2) kept it at 47-49%, so nothing was tuned to it: the top 100
+`node tools/test_battle.js` checks self-matches and that each counter works: adding engines, Interdictor Gates, traps,
+anti-air or shield generators to a ship stops more of the matching weapon and does not lower its win chance; the same engines
+stop 91% of an 11-power missile load but 66% of a 41-power one.
+
+Rank: the better-ranked ship wins about **50%** of pairs (`node tools/test_battle.js --rank`; 48% before the counters were
+added). On the first version of the model, sweeping armor, shield regen, interception, room HP, cloak and per-weapon
+multipliers (x0.5 to x2) kept it at 47-49%, so nothing was tuned to it: the top 100
 fly nearly the same rooms (rank correlates with no room-based measure by more than |0.2|), and what separates them is what the
-model leaves out. The model does react to real differences: against a copy of itself with half the reactors a ship wins ~100%,
-without shields 83%, without armor 57%. Known quirk: rooms that draw power but do not fight (e.g. engines) lower the power
-share for weapons, so removing them can look like a gain.
+model leaves out. The first version also reacted to real differences: against a copy of itself with half the reactors a ship wins ~100%,
+without shields 83%, without armor 57%. Engines draw power, but now pay for themselves: removing a top-100 ship's engines lowers its win chance by
+13 points on average and by 37 points against missile-heavy ships (20+ missile power).
 
 ## Run locally
 

@@ -26,8 +26,14 @@ const BATTLE_CONSTANTS = {
   SHIELD_HP_PER_POINT: 12,    // shield pool = sum of shield rooms' Capacity (rooms.json) x this
   SHIELD_REGEN_PER_POWER: 0.6, // shield points regained per second per power bar of shield rooms (batteries included) [cal]
   ARMOR_SCALE: 1.0,           // armor damage reduction = armor Capacity % x share of the room's edge touching armor x this [cal]
-  INTERCEPT_HALF: 8,          // anti-missile (engines) / anti-air power that stops half of incoming missiles / craft [cal]
-  BOARD_BLOCK_HALF: 3,        // anti-teleport rooms (gates, repulsors) that stop half of boarding damage
+  // Counters work like a stopping capacity that refills: every RELOAD seconds a counter can stop incoming weapon power up
+  // to its own power x COUNTER. Few missiles against many engines: nearly all are stopped. Many missiles against few
+  // engines: the engines are saturated and most get through. The same for craft vs anti-air and boarding vs gates.
+  COUNTER: { missile: 1.0, craft: 1.0 }, // incoming missile / craft power one bar of engines / anti-air can stop per volley
+  COUNTER_HIT: 0.9,           // chance a counter with capacity left stops the shot (never a perfect wall)
+  GATE_POWER: 3,              // boarding (teleport) power one Interdictor Gate / Teleport Repulsor can stop per volley
+  TRAP_CUT: 0.25,             // each Security Gate / Disintegrator Gate / gas trap / Zaki garden: boarders that got through
+                              // do 1 / (1 + this x traps) of their damage (kills or weakens them on arrival)
   CLOAK_EVADE_PER_POWER: 0.02, // chance a shot misses per cloak power bar, minus the same per radar power bar of the shooter
   CLOAK_EVADE_MAX: 0.15,
   ROLE_DMG: { laser: 1, missile: 1, craft: 1, board: 1 },   // damage multiplier per weapon kind (lasers include cannons) [cal]
@@ -79,7 +85,8 @@ const BattleModel = (() => {
       case "Reactor": return "reactor";
       case "AntiCraft": return "antiair";
       case "Engine": return "antimissile";
-      case "AntiTeleport": case "Trap": return "antitele";
+      case "AntiTeleport": return "antitele";   // Teleport Interdictor Gate, Teleport Repulsor: stop boarding
+      case "Trap": return "trap";               // Security Gate, Disintegrator Gate, gas traps: hurt boarders that land
       case "Stealth": return "cloak";
       case "Radar": return "radar";
       case "Booster": return "booster";
@@ -188,10 +195,11 @@ const BattleModel = (() => {
     s.antiMissile = sum("antimissile", (r) => r.power);
     s.antiAir = sum("antiair", (r) => r.power);
     s.antiTele = count("antitele");
+    s.traps = count("trap");
     s.cloak = sum("cloak", (r) => r.power);
     s.radar = sum("radar", (r) => r.power);
     s.crewRooms = count("crew");
-    const core = s.rooms.filter((r) => r.role !== "other" && r.role !== "crew");
+    const core = s.rooms.filter((r) => r.role !== "other" && r.role !== "crew" && r.role !== "trap");
     s.armorCover = core.length ? core.reduce((t, r) => t + r.cover, 0) / core.length : 0;
     s.armorReduction = core.length ? core.reduce((t, r) => t + reduction(r), 0) / core.length : 0;
     s.unknown = s.rooms.filter((r) => !r.known).length;
@@ -209,7 +217,11 @@ const BattleModel = (() => {
     const rooms = s.rooms.map((r) => ({ r, hp: C.ROOM_HP_PER_TILE * r.w * r.h, red: reduction(r) }));
     const weapons = rooms.filter((x) => WEAPON_ROLES.has(x.r.role) && x.r.power > 0)
       .map((x) => ({ x, next: R() * C.RELOAD }));   // random first shot
-    return { s, rooms, weapons, hull: C.HULL_HP, shield: s.shieldPool, snap: null, luck: 1 + (R() * 2 - 1) * C.FIGHT_LUCK, stats: { fired: 0, intercepted: 0, blocked: 0, missed: 0, shield: 0, hull: 0, armor: 0, knocked: 0 } };
+    const role = () => ({ dmg: 0, stopped: 0, shield: 0, armor: 0, hull: 0 });
+    return { s, rooms, weapons, hull: C.HULL_HP, shield: s.shieldPool, snap: null, luck: 1 + (R() * 2 - 1) * C.FIGHT_LUCK,
+      pool: { missile: 0, craft: 0, board: 0 },     // counter capacity left (starts full: set on the first step)
+      stats: { fired: 0, intercepted: 0, blocked: 0, missed: 0, shield: 0, hull: 0, armor: 0, knocked: 0,
+        role: { laser: role(), missile: role(), craft: role(), board: role() } } };
   }
   function live(st, role, f) { let t = 0; for (const x of st.rooms) if (x.hp > 0 && x.r.role === role) t += f ? f(x.r) : 1; return t; }
   function snapshot(st) {      // cached until a room is knocked out
@@ -220,50 +232,69 @@ const BattleModel = (() => {
     let need = 0;
     for (const x of st.rooms) if (x.hp > 0 && x.r.role !== "reactor") need += x.r.power;
     return { pf: need ? Math.min(1, made / need / C.POWER_REF) : 1, am: live(st, "antimissile", (r) => r.power), aa: live(st, "antiair", (r) => r.power),
-      at: live(st, "antitele"), cloak: live(st, "cloak", (r) => r.power), radar: live(st, "radar", (r) => r.power),
+      at: live(st, "antitele"), traps: live(st, "trap"), cloak: live(st, "cloak", (r) => r.power), radar: live(st, "radar", (r) => r.power),
       shieldMax: live(st, "shield", (r) => r.cap) * C.SHIELD_HP_PER_POINT, regen: live(st, "shield", (r) => r.power) * C.SHIELD_REGEN_PER_POWER };
   }
   // shots fired by `att` this step at `def` (both snapshots taken at the start of the step, so the order of sides never matters)
-  function fire(att, A, D, t, R, out) {
+  function fire(att, def, A, D, t, R, out) {
     for (const w of att.weapons) {
       if (w.x.hp <= 0 || w.next > t) continue;
       w.next = t + C.RELOAD * (1 + (R() * 2 - 1) * C.RELOAD_JITTER);
       const role = w.x.r.role;
-      const dmg = w.x.r.power * C.DMG_PER_POWER * A.pf * att.s.boost * att.luck * C.ROLE_DMG[role];
+      let dmg = w.x.r.power * C.DMG_PER_POWER * A.pf * att.s.boost * att.luck * C.ROLE_DMG[role];
+      const rs = att.stats.role[role];
       att.stats.fired++;
+      rs.dmg += dmg;
       const evade = Math.max(0, Math.min(C.CLOAK_EVADE_MAX, (D.cloak - A.radar) * C.CLOAK_EVADE_PER_POWER));
-      if (R() < evade) { att.stats.missed++; continue; }
-      if (role === "missile" || role === "craft") {
-        const p = (role === "missile" ? D.am : D.aa) * D.pf;
-        if (R() < p / (p + C.INTERCEPT_HALF)) { att.stats.intercepted++; continue; }
+      if (R() < evade) { att.stats.missed++; rs.stopped += dmg; continue; }
+      if (role === "missile" || role === "craft" || role === "board") {
+        // the defender's counter capacity for this kind of weapon (refilled every step in fight())
+        const p = w.x.r.power, left = def.pool[role];
+        const chance = C.COUNTER_HIT * Math.min(1, left / p);
+        def.pool[role] = Math.max(0, left - p);
+        if (chance > 0 && R() < chance) {
+          if (role === "board") att.stats.blocked++; else att.stats.intercepted++;
+          rs.stopped += dmg;
+          continue;
+        }
       }
-      if (role === "board" && R() < D.at / (D.at + C.BOARD_BLOCK_HALF)) { att.stats.blocked++; continue; }
-      out.push({ dmg, shielded: role === "laser" || role === "missile", from: att });
+      if (role === "board" && D.traps) { const cut = dmg - dmg / (1 + C.TRAP_CUT * D.traps); dmg -= cut; rs.stopped += cut; }
+      out.push({ dmg, role, shielded: role === "laser" || role === "missile", armored: role !== "board", from: att });
     }
   }
   function land(def, hits, R) {
     for (const h of hits) {
       let d = h.dmg;
-      if (h.shielded && def.shield > 0) { const a = Math.min(def.shield, d); def.shield -= a; d -= a; h.from.stats.shield += a; }
+      const rs = h.from.stats.role[h.role];
+      if (h.shielded && def.shield > 0) { const a = Math.min(def.shield, d); def.shield -= a; d -= a; h.from.stats.shield += a; rs.shield += a; }
       if (d <= 0) continue;
       const x = def.rooms[Math.floor(R() * def.rooms.length)];   // random target room (dead rooms still pass damage to the hull)
-      const after = d * (1 - (x ? x.red : 0));
+      const after = h.armored ? d * (1 - (x ? x.red : 0)) : d;   // boarders walk past armor
       h.from.stats.armor += d - after;
       h.from.stats.hull += after;
+      rs.armor += d - after; rs.hull += after;
       def.hull -= after;
       if (x && x.hp > 0) { x.hp -= after; if (x.hp <= 0) { h.from.stats.knocked++; def.snap = null; } }
     }
   }
+  // counter capacity per volley: engines vs missiles, anti-air vs craft, interdictor gates vs boarding (power-limited)
+  function capOf(S) { return { missile: S.am * S.pf * C.COUNTER.missile, craft: S.aa * S.pf * C.COUNTER.craft, board: S.at * C.GATE_POWER }; }
+  function refill(st, S) {
+    const cap = capOf(S);
+    for (const k in cap) st.pool[k] = Math.min(cap[k], st.pool[k] + (cap[k] / C.RELOAD) * C.DT);
+  }
   function fight(a, b, R) {
     const A = state(a, R), B = state(b, R);
+    A.pool = capOf(snapshot(A)); B.pool = capOf(snapshot(B));   // counters start ready
     let t = 0;
     for (; t < C.MAX_TIME; t += C.DT) {
       const sa = snapshot(A), sb = snapshot(B);
       A.shield = Math.min(sa.shieldMax, A.shield + sa.regen * sa.pf * C.DT);
       B.shield = Math.min(sb.shieldMax, B.shield + sb.regen * sb.pf * C.DT);
+      refill(A, sa); refill(B, sb);
       const toB = [], toA = [];
-      fire(A, sa, sb, t, R, toB);
-      fire(B, sb, sa, t, R, toA);
+      fire(A, B, sa, sb, t, R, toB);
+      fire(B, A, sb, sa, t, R, toA);
       land(B, toB, R);
       land(A, toA, R);
       if (A.hull <= 0 || B.hull <= 0) break;
@@ -282,13 +313,18 @@ const BattleModel = (() => {
     n = n || C.SIMS;
     const keys = ["fired", "intercepted", "blocked", "missed", "shield", "hull", "armor", "knocked"];
     const tot = { a: Object.fromEntries(keys.map((k) => [k, 0])), b: Object.fromEntries(keys.map((k) => [k, 0])) };
+    const rk = ["dmg", "stopped", "shield", "armor", "hull"], roles = ["laser", "missile", "craft", "board"];
+    const rz = () => Object.fromEntries(roles.map((ro) => [ro, Object.fromEntries(rk.map((k) => [k, 0]))]));
+    tot.a.role = rz(); tot.b.role = rz();
     let wins = 0, time = 0, timeouts = 0, draws = 0;
     for (let i = 0; i < n; i++) {
       const f = fight(a, b, R);
       wins += f.win; time += f.time; timeouts += f.timeout ? 1 : 0; draws += f.win === 0.5 ? 1 : 0;
       keys.forEach((k) => { tot.a[k] += f.A.stats[k]; tot.b[k] += f.B.stats[k]; });
+      roles.forEach((ro) => rk.forEach((k) => { tot.a.role[ro][k] += f.A.stats.role[ro][k]; tot.b.role[ro][k] += f.B.stats.role[ro][k]; }));
     }
     keys.forEach((k) => { tot.a[k] /= n; tot.b[k] /= n; });
+    roles.forEach((ro) => rk.forEach((k) => { tot.a.role[ro][k] /= n; tot.b.role[ro][k] /= n; }));
     return { pA: wins / n, pB: 1 - wins / n, n, avgTime: time / n, timeouts: timeouts / n, draws: draws / n, a: tot.a, b: tot.b };
   }
   return { setup, fromTop, fromBuild, learnCategories, measureArmor, duel, reduction, get constants() { return C; } };
@@ -398,6 +434,44 @@ if (typeof document !== "undefined") (() => {
       el("div", { class: "oddsbar", role: "img", "aria-label": `Estimated win chance: ${nameA} ${fmt(a, 1)}%, ${nameB} ${fmt(b, 1)}%` },
         el("span", { class: "fa", style: `width:${a}%` }), el("span", { class: "fb", style: `width:${b}%` })));
   }
+  // weapon kind vs the counter that answers it, as simulated: what share of the damage the counter took out
+  const KIND = {
+    laser: { name: "Lasers & cannons", dmg: "laser and cannon", counter: (S) => `shields (${fmt(S.shieldRegen * S.powerFactor, 1)}/s regen, ${fmt(S.shieldPool)} pool)` },
+    missile: { name: "Missiles", dmg: "missile", counter: (S) => `engines (${S.antiMissile} power) and shields` },
+    craft: { name: "Hangars (craft)", dmg: "hangar craft", counter: (S) => `anti-air (${S.antiAir} power)` },
+    board: { name: "Boarding (teleport)", dmg: "boarding", counter: (S) => [S.antiTele ? `${S.antiTele} interdictor gate${S.antiTele === 1 ? "" : "s"} / repulsor${S.antiTele === 1 ? "" : "s"}` : "",
+      S.traps ? `${S.traps} trap${S.traps === 1 ? "" : "s"}` : ""].filter(Boolean).join(" and ") || "no gates or traps" },
+  };
+  function stopShare(rr) { return rr && rr.dmg > 0 ? (rr.stopped + rr.shield) / rr.dmg : null; }
+  function verdict(v) { return v == null ? "" : v >= 0.75 ? "hard countered" : v >= 0.5 ? "countered" : v >= 0.25 ? "partly stopped" : "gets through"; }
+  // [kind, attacker side 'a'|'b', share stopped] for every weapon kind a side actually uses
+  function matchups(A, B, r) {
+    const out = [];
+    for (const [side, S] of [["a", A], ["b", B]]) for (const k of Object.keys(KIND)) {
+      if (!S.weaponPower[k]) continue;
+      out.push([k, side, stopShare(r[side].role[k])]);
+    }
+    return out;
+  }
+  function matchupTable(A, B, r) {
+    const tb = el("tbody");
+    matchups(A, B, r).forEach(([k, side, v]) => {
+      const S = side === "a" ? A : B, D = side === "a" ? B : A, o = side === "a" ? "B" : "A";
+      const rr = r[side].role[k];
+      tb.append(el("tr", {},
+        el("th", { scope: "row" }, el("span", { class: "tag " + (side === "a" ? "ta" : "tb"), text: side.toUpperCase() }),
+          document.createTextNode(` ${KIND[k].name} (${S.weaponPower[k]} power)`), el("small", { text: `vs ${o}'s ${KIND[k].counter(D)}` })),
+        el("td", { class: "num", text: pct(v) }),
+        el("td", { class: "num", text: rr.dmg > 0 ? fmt(rr.hull / Math.max(1, r.avgTime) * 60) : "-" }),
+        el("td", { class: "verdict v" + verdict(v).split(" ")[0], text: verdict(v) })));
+    });
+    if (!tb.children.length) return el("p", { class: "muted", text: "Neither ship has weapons." });
+    return el("table", { class: "cmp mu" }, el("caption", { class: "vh", text: "Weapon matchups" }),
+      el("thead", {}, el("tr", {}, el("th", { scope: "col", text: "Weapons vs the enemy's counter" }),
+        el("th", { scope: "col", class: "num", text: "Stopped", title: "Share of this weapon's damage shot down, dodged, blocked or soaked by shields" }),
+        el("th", { scope: "col", class: "num", text: "Hull dmg/min", title: "What still reaches the enemy hull per minute (after armor)" }),
+        el("th", { scope: "col", text: "" }))), tb);
+  }
   // rows of the breakdown: [group, label, valueA, valueB, higherIsBetter (null = no judgement), hint]
   function rowsFor(A, B, r) {
     const wp = (s) => s.weaponPower;
@@ -418,7 +492,8 @@ if (typeof document !== "undefined") (() => {
       ["Defense", "Average damage reduction from armor", pct(A.armorReduction), pct(B.armorReduction), true, ""],
       ["Defense", "Anti-missile power (engines)", A.antiMissile, B.antiMissile, true, ""],
       ["Defense", "Anti-air power", A.antiAir, B.antiAir, true, ""],
-      ["Defense", "Anti-teleport rooms", A.antiTele, B.antiTele, true, ""],
+      ["Defense", "Interdictor gates / repulsors (stop boarders)", A.antiTele, B.antiTele, true, ""],
+      ["Defense", "Traps: security gates etc. (hurt boarders)", A.traps, B.traps, true, ""],
       ["Defense", "Cloak / radar power", `${A.cloak} / ${A.radar}`, `${B.cloak} / ${B.radar}`, null, ""],
       ["Defense", "Hull HP (assumed equal)", BattleModel.constants.HULL_HP, BattleModel.constants.HULL_HP, null, "Not in the game data on this site."],
       ["Power", "Power made / needed at full power", `${A.made} / ${A.need}`, `${B.made} / ${B.need}`, null, ""],
@@ -460,7 +535,15 @@ if (typeof document !== "undefined") (() => {
     push(rel(A.powerFactor, B.powerFactor), A.powerFactor >= B.powerFactor ? `${nB} is short of power (${pct(B.powerRatio)} of full power made).` : `${nA} is short of power (${pct(A.powerRatio)} of full power made).`);
     const iA = r.b.intercepted + r.b.blocked, iB = r.a.intercepted + r.a.blocked;
     push(rel(iA, iB) * 0.8, iA >= iB ? `${nA}'s anti-missile, anti-air and gates stop more incoming shots (${fmt(iA, 1)} vs ${fmt(iB, 1)} per fight).` : `${nB}'s anti-missile, anti-air and gates stop more incoming shots (${fmt(iB, 1)} vs ${fmt(iA, 1)} per fight).`);
-    return out.filter(([w]) => w > 0.05).sort((x, y) => y[0] - x[0]).slice(0, 4).map(([, t]) => t);
+    // the matchups that decide the most damage: a weapon kind that is a big share of a side's firepower and gets countered
+    matchups(A, B, r).forEach(([k, side, v]) => {
+      const S = side === "a" ? A : B, D = side === "a" ? B : A, me = side === "a" ? nA : nB, o = side === "a" ? nB : nA;
+      const tot = S.weaponPower.laser + S.weaponPower.missile + S.weaponPower.craft + S.weaponPower.board;
+      const weight = (S.weaponPower[k] / Math.max(1, tot)) * (v >= 0.5 ? v : v < 0.25 ? 0.7 - v : 0) * 1.4;
+      if (v >= 0.5) push(weight, `${o}'s ${KIND[k].counter(D)} stop ${pct(v)} of ${me}'s ${KIND[k].dmg} damage (${verdict(v)}).`);
+      else if (v < 0.25) push(weight, `${me}'s ${KIND[k].dmg} damage gets through: ${o}'s ${KIND[k].counter(D)} stop only ${pct(v)}.`);
+    });
+    return out.filter(([w]) => w > 0.05).sort((x, y) => y[0] - x[0]).slice(0, 5).map(([, t]) => t);
   }
   function card(side, s) {
     const box = $("ship" + side.toUpperCase());
@@ -493,6 +576,7 @@ if (typeof document !== "undefined") (() => {
         (r.timeouts > 0.01 ? `, ${pct(r.timeouts)} went the full ${BattleModel.constants.MAX_TIME} s (decided on hull left)` : "") +
         (same ? ". Same ship on both sides: should be close to 50%." : ".") + ` (${fmt(performance.now() - t0)} ms)`;
       $("why").replaceChildren(...reasons(A, B, r).map((t) => el("li", { text: t })));
+      $("matchups").replaceChildren(matchupTable(A, B, r));
       $("breakdown").replaceChildren(breakdown(A, B, r));
       $("result").setAttribute("aria-busy", "false");
       try { history.replaceState(null, "", `?a=${encodeURIComponent(sides.a)}&b=${encodeURIComponent(sides.b)}`); } catch (e) { /* file:// */ }
