@@ -102,6 +102,8 @@ const SEARCH_FIELDS = [
   ["population", "Elite layouts kept"], ["cores", "CPU cores to use (0 = automatic)"],
 ];
 const STORE_KEY = "shipOptimizerSettings.v1";
+const RESULTS_KEY = "shipOptimizerResults.v1";   // the last search's layouts (full JSON), shown again after a reload
+const BASE_TITLE = document.title;
 
 // ---------------------------------------------------------------- helpers
 const $ = (id) => document.getElementById(id);
@@ -216,7 +218,38 @@ function shipSelect(s, i) {
   shipActive = i;
   $("shipPreview").hidden = false;
   $("shipPreviewName").textContent = `${s.name} (${s.rows[0].length} x ${s.rows.length}, ${s.tiles} tiles)`;
-  $("shipPreviewSvg").innerHTML = hullPreviewSvg(s.rows);
+  shipExt = Hulls.isExtended(s.name) ? Hulls.extendedResources(s) : null;
+  shipExtShow();
+}
+// Extended hulls: the tiles added to the base hull are resource space (Hulls.extendedResources); the box can turn it off
+let shipExt = null, shipApplied = null, shipExtOn = true;
+try { shipExtOn = localStorage.getItem("shipOptimizerExtRes") !== "off"; } catch (e) { /* storage blocked */ }
+function shipRowsToUse() { return shipExt && shipExt.rows && shipExtOn ? shipExt.rows : shipPicked.rows; }
+function shipExtShow() {
+  let box = $("shipExtNote");
+  if (!box) { box = el("div", { id: "shipExtNote", class: "muted" }); $("shipPreviewSvg").after(box); }
+  box.innerHTML = "";
+  box.hidden = !shipExt;
+  $("shipPreviewSvg").innerHTML = hullPreviewSvg(shipRowsToUse());
+  if (!shipExt) return;
+  if (shipExt.error) { box.textContent = `Extended hull, but no resource tiles were marked: ${shipExt.error}. Mark them by hand with r in the grid editor.`; return; }
+  const cb = el("input", { type: "checkbox" });
+  cb.checked = shipExtOn;
+  cb.onchange = () => {
+    shipExtOn = cb.checked;
+    try { localStorage.setItem("shipOptimizerExtRes", shipExtOn ? "on" : "off"); } catch (e) { /* storage blocked */ }
+    shipExtShow();
+    // already applied to the hull and not edited since: switch it there too
+    const t = $("hull");
+    if (shipApplied && shipApplied.ship === shipPicked && t.value === shipApplied.text) {
+      shipApplied.text = t.value = shipRowsToUse().join("\n");
+      t.dispatchEvent(new Event("input"));
+    }
+  };
+  const b = shipExt.base;
+  box.append(el("label", { class: "inline" }, cb, document.createTextNode(
+    ` ${shipExt.count} resource tiles marked (added by the Extended version of ${b.name}${b.level != null ? `, level ${b.level}` : ""})`)));
+  if (shipExt.warn) box.append(el("div", { class: "bad", text: shipExt.warn }));
 }
 async function shipEnsureLoaded(preferGame) {
   if (Hulls.count && !preferGame) return true;
@@ -252,10 +285,12 @@ function buildShipFinder() {
     if (!shipPicked) return;
     hullBefore = cfgState.hull;
     const t = $("hull");
-    t.value = shipPicked.rows.join("\n");
+    t.value = shipRowsToUse().join("\n");
+    shipApplied = { ship: shipPicked, text: t.value };
     t.dispatchEvent(new Event("input"));
     $("hullUndo").hidden = false;
-    $("shipStatus").textContent = `Hull set to ${shipPicked.name}. Next: choose your rooms.`;
+    const ext = shipExt && shipExt.rows && shipExtOn ? ` with ${shipExt.count} resource tiles marked (untick the box above to undo)` : "";
+    $("shipStatus").textContent = `Hull set to ${shipPicked.name}${ext}. Next: choose your rooms.`;
   };
   $("hullUndo").onclick = () => {
     if (hullBefore == null) return;
@@ -417,7 +452,7 @@ function buildGrid(containerId, fields, store, step) {
 }
 function buildStructure() {
   buildGrid("structure", STRUCTURE_FIELDS, cfgState.settings);
-  $("structure").addEventListener("change", () => { updateRoomSummary(); });
+  $("structure").onchange = () => { updateRoomSummary(); };   // onchange, not addEventListener: this runs on every rebuild
   const box = $("structure");
   [["priority_range", "Priority armor sweet spot (low)", 0], ["priority_range", "Priority armor sweet spot (high)", 1],
    ["combat_range", "Combat armor sweet spot (low)", 0], ["combat_range", "Combat armor sweet spot (high)", 1]].forEach(([k, label, i]) => {
@@ -555,6 +590,7 @@ function setupSig() {
 function preflight() {
   const rows = hullRows();
   if (!rows.length) return "Set a hull first (Hull tab).";
+  if (!rows.every((r) => r.length === rows[0].length && /^[xr.]+$/.test(r))) return "The hull grid is invalid: every row must be the same length and use only x, r and . (Hull tab, Edit the hull grid by hand).";
   const active = cfgState.rooms.filter((r) => (r.count || 0) > 0);
   if (!active.length) return "Add at least one room before starting (Rooms tab, or use Recommend rooms).";
   if (active.every((r) => catOf(r.cat).kind === "resource")) return "Add at least one non-resource room (weapons, shields, engines...). The search needs a normal room to build around.";
@@ -563,6 +599,7 @@ function preflight() {
   const roomTiles = active.reduce((a, r) => a + r.count * r.w * r.h, 0);
   const tiles = rows.join("").replace(/[^xr]/g, "").length;
   const armor = Math.max(0, Math.round(cfgState.settings.ARMOR_COUNT || 0));
+  if (roomTiles > tiles) return `The rooms need ${roomTiles} tiles but the hull has only ${tiles}. Remove rooms (Rooms tab) or pick a bigger hull.`;
   if (tiles > 0 && roomTiles + armor === tiles) return `No free tile is left for armor, lifts or vents: the rooms (${roomTiles}) and ${armor} armor fill all ${tiles} tiles. Remove a room or lower the armor.`;
   const fits = (r) => {
     const kind = catOf(r.cat).kind;
@@ -617,6 +654,7 @@ function resetPool() { pool.forEach((p) => p.w.terminate()); pool = []; ensurePo
 function anyReady() { return pool.some((p) => p.ready); }
 function setIdleUi() {
   running = false;
+  document.title = BASE_TITLE;
   run = null;
   $("startBtn").disabled = !anyReady();
   $("stopBtn").disabled = true;
@@ -647,6 +685,28 @@ function saveBest() {
   if (!found.length || foundSig == null) return;
   try { localStorage.setItem(BEST_KEY, JSON.stringify({ sig: foundSig, states: found.slice(0, 6).map((l) => l.state).filter(Boolean) })); } catch (e) { /* ignore */ }
 }
+// the layouts on screen survive a reload: they are stored with the hull + room list they belong to
+let restoredAt = null;
+function saveResults() {
+  if (!found.length || foundSig == null) return;
+  try { localStorage.setItem(RESULTS_KEY, JSON.stringify({ sig: foundSig, t: Date.now(), layouts: found })); } catch (e) { /* full or blocked: ignore */ }
+}
+function restoreResults() {
+  let v = null;
+  try { v = JSON.parse(localStorage.getItem(RESULTS_KEY) || "null"); } catch (e) { return; }
+  if (!v || !Array.isArray(v.layouts) || !v.layouts.length || !v.layouts.every((l) => l && l.grid && l.stats && typeof l.score === "number")) return;
+  found = v.layouts; foundSig = v.sig; restoredAt = v.t || null;
+  setLayouts(found, false);
+}
+function updateResultNotes() {
+  const stale = !running && layouts.length > 0 && foundSig != null && foundSig !== setupSig();
+  const sn = $("staleNote");
+  sn.hidden = !stale;
+  sn.textContent = stale ? "These layouts were found for a different hull or room list than the one in the settings now. Press Start search to search the current setup." : "";
+  const rn = $("restoredNote");
+  rn.hidden = !(restoredAt && layouts.length && !running && !stale);
+  if (!rn.hidden) rn.textContent = `Results of your last search (${new Date(restoredAt).toLocaleString()}), kept in this browser.`;
+}
 function updateSavedNote() {
   const n = loadSavedBest().length;
   $("resumeNote").textContent = n ? `${n} saved layout${n > 1 ? "s" : ""} for this hull and room list, from earlier searches in this browser.`
@@ -664,8 +724,10 @@ function mergeLayouts(list) {
   const first = !found.length;
   if (run) foundSig = run.sig;
   found = [...all.values()].sort((x, y) => y.score - x.score).slice(0, 5);
+  restoredAt = null;
   setLayouts(found, true);
-  if (found[0].score > before) saveBest();
+  if (found[0].score > before) { saveBest(); if (run) run.lastGain = Date.now(); }
+  saveResults();
   if (first && window.matchMedia("(max-width: 960px)").matches) { const w = $("layoutWrap"); if (w) w.scrollIntoView({ behavior: "smooth", block: "start" }); }
   return true;
 }
@@ -682,7 +744,23 @@ function showProgress() {
   const total = run.restarts ? `/${run.restarts}` : "";
   const cores = `${pool.length} core${pool.length > 1 ? "s" : ""}`;
   const round = run.rounds ? ` | round ${run.round} (${Math.round(run.roundLen)}s)` : "";
-  $("progressText").textContent = `Restart ${doneNow}${total} on ${cores}${round}` + (best != null ? ` | best score ${best.toFixed(1)}` : "") + ` | ${elapsed.toFixed(0)}s elapsed`;
+  // time left: exact for a time limit, estimated from the pace so far for a restart count
+  let left = "";
+  if (run.timeLimit) left = elapsed < run.timeLimit ? ` | about ${fmtDur(run.timeLimit - elapsed)} left` : " | finishing up";
+  else if (run.restarts && doneNow > 0 && doneNow < run.restarts) left = ` | about ${fmtDur((elapsed / doneNow) * (run.restarts - doneNow))} left`;
+  else if (!run.timeLimit && !run.restarts) left = " | runs until you press Stop";
+  const gain = run.lastGain ? ` | last improvement ${fmtDur((Date.now() - run.lastGain) / 1000)} ago` : "";
+  $("progressText").textContent = `Restart ${doneNow}${total} on ${cores}${round}` + (best != null ? ` | best score ${best.toFixed(1)}` : "") +
+    ` | ${fmtDur(elapsed)} elapsed${left}${gain}`;
+  if (frac != null) document.title = `(${Math.round(Math.min(1, frac) * 100)}%) ${BASE_TITLE}`;
+  else document.title = `(searching) ${BASE_TITLE}`;
+}
+function fmtDur(sec) {
+  sec = Math.max(0, Math.round(sec));
+  if (sec < 60) return sec + "s";
+  const m = Math.floor(sec / 60), r = sec % 60;
+  if (m < 60) return r ? `${m}m ${r}s` : `${m}m`;
+  return `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 // a raw Python traceback is no use to the user: keep its last line and point at likely causes
 function friendlyError(msg) {
@@ -747,7 +825,7 @@ function roundFinished() {
   const odds = (pool.find((p) => p.odds) || {}).odds;
   setLayouts(found, false);
   $("barFill").style.width = "100%";
-  $("progressText").textContent = `${r.doneBefore} restarts on ${pool.length} core${pool.length > 1 ? "s" : ""}` + (found.length ? ` | best score ${found[0].score.toFixed(1)}` : "") + ` | ${elapsed.toFixed(0)}s`;
+  $("progressText").textContent = `${r.doneBefore} restarts on ${pool.length} core${pool.length > 1 ? "s" : ""}` + (found.length ? ` | best score ${found[0].score.toFixed(1)}` : "") + ` | took ${fmtDur(elapsed)}`;
   $("status").textContent = r.timeLimit && r.rounds ? "Finished: time limit reached" : "Finished";
   if (odds) $("oddsBox").textContent = "Learned move odds: " + Object.entries(odds).map(([k, v]) => `${k} ${(v * 100).toFixed(0)}%`).join(", ");
   updateSavedNote();
@@ -768,7 +846,7 @@ function buildConfig() {
 function start() {
   engineRestarting = false;
   const problem = preflight();
-  if (problem) { showError(problem); return; }
+  if (problem) { showError(problem); $("status").textContent = "Cannot start yet"; return; }
   $("errorBox").hidden = true;
   $("oddsBox").textContent = "";
   $("barFill").style.width = "0";
@@ -778,6 +856,7 @@ function start() {
   const sig = setupSig();
   found = resume && foundSig === sig ? found.filter((l) => l.state) : [];
   foundSig = sig;
+  restoredAt = null;
   if (!found.length) { layouts = []; activeIdx = 0; $("altTabs").hidden = true; $("scoreNote").hidden = true; $("layoutWrap").hidden = true; $("emptyMsg").hidden = false; }
   ensurePool(wantedCores());
   running = true;
@@ -837,6 +916,45 @@ function renderTabs() {
   if (hidden) bits.push(`${hidden} much weaker alternative${hidden > 1 ? "s" : ""} hidden.`);
   note.textContent = bits.join(" ");
   note.hidden = !bits.length;
+  renderCompare(shown);
+  updateResultNotes();
+}
+// side-by-side numbers of the found layouts, best value of each row marked
+const COMPARE_ROWS = [
+  ["Score", (l) => l.score, 1, (v) => v.toFixed(1)],
+  ["Armor tiles placed", (l) => l.stats.armor_tiles, 1],
+  ["Armor touching no room", (l) => l.stats.armor_touching_no_room, -1],
+  ["Combat rooms with no armor", (l) => l.stats.combat_rooms_without_armor, -1],
+  ["Priority rooms with no armor", (l) => l.stats.priority_rooms_without_armor, -1],
+  ["Unreachable room pairs", (l) => l.stats.unreachable_pairs, -1],
+  ["Average travel", (l) => l.stats.avg_travel, -1, (v) => v.toFixed(1)],
+  ["Lifts", (l) => l.stats.lifts, 0],
+  ["Vents (unlinked)", (l) => l.stats.vents_unlinked, -1, null, (l) => `${l.stats.vents} (${l.stats.vents_unlinked})`],
+  ["Unused open tiles", (l) => l.stats.unused_open_tiles, -1],
+];
+function renderCompare(shown) {
+  const box = $("compareBox"), t = $("compareTable");
+  box.hidden = shown.length < 2;
+  if (box.hidden) { t.replaceChildren(); return; }
+  const name = (i) => (i === 0 ? "Best" : "Alt " + i);
+  const head = el("tr", {}, el("th", { text: "" }), ...shown.map((i) => {
+    const b = el("button", { type: "button", class: "linkbtn" + (i === activeIdx ? " active" : ""), text: name(i), title: `Show ${name(i)}` });
+    b.onclick = () => { activeIdx = i; renderTabs(); renderLayout(); };
+    return el("th", { class: "num", ...(i === activeIdx ? { "aria-current": "true" } : {}) }, b);
+  }));
+  const rows = COMPARE_ROWS.map(([label, get, dir, fmt, show]) => {
+    const vals = shown.map((i) => { const v = get(layouts[i]); return typeof v === "number" && isFinite(v) ? v : null; });
+    const nums = vals.filter((v) => v != null);
+    const target = dir > 0 ? Math.max(...nums) : dir < 0 ? Math.min(...nums) : null;
+    const allSame = nums.every((v) => v === nums[0]);
+    return el("tr", {}, el("th", { scope: "row", text: label }), ...shown.map((i, k) => {
+      const v = vals[k];
+      const best = dir && v != null && v === target && !allSame;
+      return el("td", { class: "num" + (best ? " best" : "") + (i === activeIdx ? " cur" : ""), title: best ? "Best of the found layouts" : "",
+        text: v == null ? "-" : show ? show(layouts[i]) : fmt ? fmt(v) : String(v) });
+    }));
+  });
+  t.replaceChildren(head, ...rows);
 }
 const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 // colour of a room in the result picture: its category colour (older results without categories: by kind)
@@ -855,6 +973,14 @@ function roomShort(r) {
   return r.w === 1 ? t[0] : t;
 }
 const TILE = 26;
+// dark or white label text, whichever reads better on a room colour (same rule as inkFor in js/analyze.js)
+function inkOn(hex) {
+  const m = /^#([0-9a-f]{6})$/i.exec(String(hex).trim());
+  if (!m) return "#fff";
+  const lin = [0, 2, 4].map((i) => { const c = parseInt(m[1].slice(i, i + 2), 16) / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; });
+  const L = 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2];
+  return (L + 0.05) / 0.05 > 1.05 / (L + 0.05) ? "#0c111b" : "#fff";
+}
 function layoutSvg(l) {
   const W = l.width, H = l.height, T = TILE;
   const p = [`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W * T} ${H * T}" width="${W * T}" height="${H * T}" font-family="system-ui,sans-serif">`];
@@ -865,12 +991,12 @@ function layoutSvg(l) {
   (l.resource_tiles || []).forEach(([x, y]) => p.push(`<rect x="${x * T}" y="${y * T}" width="${T}" height="${T}" fill="#24406b" stroke="#1a2133" stroke-width="1"><title>Resource space ${x}, ${y}</title></rect>`));
   const rect = (r, fill, label, tip) => p.push(
     `<g><title>${tip}</title><rect x="${r.x * T + 1}" y="${r.y * T + 1}" width="${r.w * T - 2}" height="${r.h * T - 2}" rx="3" fill="${fill}" stroke="#0c111b" stroke-width="1.5"/>` +
-    `<text x="${(r.x + r.w / 2) * T}" y="${(r.y + r.h / 2) * T + 5}" text-anchor="middle" fill="#fff" font-size="13" font-weight="600">${label}</text></g>`);
+    `<text x="${(r.x + r.w / 2) * T}" y="${(r.y + r.h / 2) * T + 5}" text-anchor="middle" fill="${inkOn(fill)}" font-size="13" font-weight="600">${label}</text></g>`);
   l.rooms.forEach((r) => {
     const tip = `${r.name}` + (r.catLabel ? ` [${r.catLabel}]` : "") + ` (${r.w}x${r.h}) at ${r.x}, ${r.y}` + (r.combat ? ` | armor touching: ${r.armor}` : "");
     rect(r, roomColor(r), esc(roomShort(r)), esc(tip));
   });
-  l.bonus.forEach((r) => rect(r, "#3f9b57", "x", `${r.name} at ${r.x}, ${r.y}`));
+  l.bonus.forEach((r) => rect(r, "#3f9b57", "x", esc(`${r.name} at ${r.x}, ${r.y}`)));
   l.armor.forEach(([x, y]) => p.push(`<rect x="${x * T + 2}" y="${y * T + 2}" width="${T - 4}" height="${T - 4}" fill="#e6b93c"><title>Armor ${x}, ${y}</title></rect>`));
   l.lifts.forEach(([x, y0, y1]) => p.push(`<rect x="${x * T + 3}" y="${y0 * T}" width="${T - 6}" height="${(y1 - y0 + 1) * T}" fill="#38c6d9"><title>Lift x=${x}, y ${y0}-${y1}</title></rect>`));
   l.vents.forEach(([x, y]) => p.push(`<rect x="${x * T + 4}" y="${y * T + 4}" width="${T - 8}" height="${T - 8}" fill="#f5f5f5"><title>Vent ${x}, ${y}</title></rect>`));
@@ -959,7 +1085,7 @@ function renderLayout() {
   defs.forEach(([k, v, warn]) => sb.append(el("div", { class: "stat" + (warn ? " warn" : "") }, el("b", { text: String(v) }), document.createTextNode(k))));
 
   const t = $("inventory");
-  t.innerHTML = "<tr><th>Room</th><th>Type</th><th>Size</th><th>x, y</th><th>Armor</th></tr>";
+  t.innerHTML = '<tr><th>Room</th><th>Type</th><th>Size</th><th class="nowrap">x, y</th><th>Armor</th></tr>';
   const sorted = l.rooms.map((r) => r).sort((a, b) => a.y - b.y || a.x - b.x);
   sorted.forEach((r) => {
     let armor = "", bad = false;
@@ -967,8 +1093,8 @@ function renderLayout() {
       armor = String(r.armor);
       if (r.range) { armor += ` (${r.range[0]}-${r.range[1]})`; bad = r.armor < r.range[0]; }
     }
-    const typ = el("td", { class: "typecell" }, el("i", { style: `background:${roomColor(r)}` }), document.createTextNode(r.catLabel || (r.priority ? "Priority" : r.combat ? "Combat" : "Non-combat")));
-    const tr = el("tr", {}, el("td", { text: r.name }), typ, el("td", { text: `${r.w}x${r.h}` }), el("td", { text: `${r.x}, ${r.y}` }), el("td", { class: bad ? "bad" : "", text: armor }));
+    const typ = el("td", { class: "typecell" }, el("i", { style: `background:${roomColor(r)}`, title: r.catLabel || "" }), el("span", { class: "tlabel", text: r.catLabel || (r.priority ? "Priority" : r.combat ? "Combat" : "Non-combat") }));
+    const tr = el("tr", {}, el("td", { text: r.name }), typ, el("td", { text: `${r.w}x${r.h}` }), el("td", { class: "nowrap", text: `${r.x}, ${r.y}` }), el("td", { class: "nowrap" + (bad ? " bad" : ""), text: armor }));
     t.append(tr);
   });
   l.bonus.forEach((r) => t.append(el("tr", {}, el("td", { text: r.name }), el("td", { text: "Bonus" }), el("td", { text: `${r.w}x${r.h}` }), el("td", { text: `${r.x}, ${r.y}` }), el("td"))));
@@ -1043,6 +1169,7 @@ function updateSteps() {
   $("stepSearch").textContent = running ? "searching..." : found.length ? `best score ${found[0].score.toFixed(0)}` : anyReady() ? "ready" : engineFailed ? "unavailable (offline?)" : "loading Python...";
   watchRun();
   updateSavedNote();
+  if ($("staleNote")) updateResultNotes();
   const done = { hull: !!tiles, rooms: n > 0 && used <= tiles, search: found.length > 0 };
   document.querySelectorAll("#steps li").forEach((li) => li.classList.toggle("done", !!done[li.dataset.step]));
 }
@@ -1234,13 +1361,58 @@ $("roomsPaste").onclick = async () => {
 // ---------------------------------------------------------------- wire up
 $("startBtn").onclick = start;
 $("stopBtn").onclick = () => stop();
-$("resetBtn").onclick = () => { if (confirm("Reset all settings to the defaults?")) { cfgState = clone(DEFAULTS); saveSettings(); buildAll(); buildTopUi(); buildPlanner(); updateTopNote(); } };
-$("dlJson").onclick = () => download("ship-layout.json", JSON.stringify(layouts[activeIdx], null, 2), "application/json");
-$("dlSvg").onclick = () => download("ship-layout.svg", layoutSvg(layouts[activeIdx]), "image/svg+xml");
+$("resetBtn").onclick = () => { if (confirm("Reset all settings to the defaults?")) { cfgState = clone(DEFAULTS); saveSettings(); buildAll(); buildTopUi(); buildPlanner(); updateTopNote(); updateStyleNote(); markBuildChip(); } };
+// file names say which ship, which layout and its score, so several downloads stay apart
+function layoutFileName(ext) {
+  const s = currentShip(), l = layouts[activeIdx];
+  const base = (s ? s.name : "ship").replace(/[^\w-]+/g, "-").replace(/^-+|-+$/g, "").toLowerCase() || "ship";
+  return `${base}-layout-${activeIdx ? "alt" + activeIdx : "best"}` + (l ? `-score-${Math.round(l.score)}` : "") + "." + ext;
+}
+$("dlJson").onclick = () => download(layoutFileName("json"), JSON.stringify(layouts[activeIdx], null, 2), "application/json");
+$("dlSvg").onclick = () => download(layoutFileName("svg"), layoutSvg(layouts[activeIdx]), "image/svg+xml");
+$("dlTxt").onclick = () => download(layoutFileName("txt"), coordsText(layouts[activeIdx]) + "\n", "text/plain");
+let copyMsgTimer = null;
+function copyMsg(t) { $("copyMsg").textContent = t; clearTimeout(copyMsgTimer); copyMsgTimer = setTimeout(() => { $("copyMsg").textContent = ""; }, 4000); }
 $("copyCoords").onclick = async () => {
-  try { await navigator.clipboard.writeText(coordsText(layouts[activeIdx])); $("status").textContent = "Coordinates copied"; }
-  catch (e) { $("status").textContent = "Copy blocked by the browser"; }
+  const text = coordsText(layouts[activeIdx]);
+  try { await navigator.clipboard.writeText(text); copyMsg("Coordinates copied."); }
+  catch (e) {
+    // clipboard blocked (e.g. not https, or no permission): let the user copy it by hand
+    prompt("Your browser blocked copying. Select all and copy:", text);
+    copyMsg("Copy by hand, or use Download coordinates.");
+  }
 };
+$("zoomBtn").onclick = () => {
+  const on = $("layoutSvg").classList.toggle("zoomed");
+  $("zoomBtn").setAttribute("aria-pressed", String(on));
+  $("zoomBtn").textContent = on ? "Fit to width" : "Zoom in";
+};
+// keyboard-reachable buttons for the hidden file inputs
+$("shipFileBtn").onclick = () => $("shipFile").click();
+$("settingsLoadBtn").onclick = () => $("settingsLoad").click();
+$("settingsSave").onclick = () => {
+  const s = currentShip();
+  download(`${s ? s.name.replace(/[^\w-]+/g, "-").toLowerCase() : "ship"}-optimizer-settings.json`, JSON.stringify(Object.assign({ app: "ship-layout-optimizer" }, cfgState), null, 2), "application/json");
+  $("settingsMsg").textContent = "Settings saved to a file.";
+};
+$("settingsLoad").onchange = async (e) => {
+  const f = e.target.files[0];
+  e.target.value = "";
+  if (!f) return;
+  try {
+    const s = JSON.parse(await f.text());
+    if (!s || typeof s !== "object" || typeof s.hull !== "string" || !Array.isArray(s.rooms)) throw new Error("it is not a settings file saved from this page");
+    if (running) stop("Search stopped to load a settings file.");
+    delete s.app;
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(s)); } catch (x) { /* blocked: handled below */ }
+    cfgState = loadSettings();
+    if (cfgState.hull !== s.hull) cfgState = Object.assign(clone(DEFAULTS), s);   // storage blocked: use the file as is
+    saveSettings(); buildAll(); buildTopUi(); buildPlanner(); updateTopNote(); updateStyleNote(); updateHullBadge(); markBuildChip();
+    $("settingsMsg").textContent = `Loaded ${f.name}.`;
+  } catch (err) { $("settingsMsg").textContent = "Could not load that file: " + err.message; }
+};
+// leaving the page ends a running search
+window.addEventListener("beforeunload", (e) => { if (running) { e.preventDefault(); e.returnValue = ""; } });
 buildAll();
 buildShipFinder();
 buildTopUi();
@@ -1252,11 +1424,9 @@ Promise.all([Hulls.load(false).catch(() => null), Top100.load()]).then(() => {
   const ship = isNaN(id) ? null : Hulls.byId(id);
   const build = (params.get("build") || "").split(/[+ ]/);   // ...&build=missile+hangar: open the recommender for it
   if (ship) {
-    hullBefore = cfgState.hull;
-    $("hull").value = ship.rows.join("\n");
-    $("hull").dispatchEvent(new Event("input"));
-    $("hullUndo").hidden = false;
-    $("shipStatus").textContent = `Hull set to ${ship.name} from the Top 100 page.`;
+    shipSelect(ship, -1);   // preview + Extended resource tiles, same as picking it by hand
+    $("shipUse").click();
+    $("shipStatus").textContent = $("shipStatus").textContent.replace(/\. Next:.*$/, " from the Top 100 page.");
   }
   if (location.search) history.replaceState(null, "", location.pathname);
   updateTopNote(); updateStyleNote(); updateHullBadge(); buildChips();
@@ -1282,5 +1452,6 @@ GameRooms.load().then((n) => {
   buildRooms();
   if (layouts[activeIdx]) renderLayout();          // power of the shown layout needs the game room data
 });
+restoreResults();
 updateSavedNote();
 ensurePool(1);
