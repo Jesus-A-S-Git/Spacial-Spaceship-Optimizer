@@ -24,7 +24,7 @@ INT_KEYS = {"ARMOR_COUNT", "MAX_EMPTY_RUN", "LIFT_COST", "VENT_COUNT", "VENT_LIN
 FLOAT_KEYS = {"PRIORITY_WEIGHT", "W_ARMOR", "W_UNARMORED", "W_PRIORITY_UNARMORED", "W_FLOAT",
               "W_TRAVEL", "W_CORNER", "W_DISC", "CORNER_UNREACHABLE", "W_LIFT", "W_LTOUCH",
               "W_LIFT_BALANCE", "W_LIFT_COUNT", "W_GAP", "W_EMPTY", "W_RUN", "W_ISO", "W_SPREAD",
-              "SPREAD_CAP", "W_VENT", "W_ARMOR_UNDER", "PRIORITY_UNDER_MULT", "W_ARMOR_OVER", "W_SIDE", "W_CENTER", "W_PATTERN", "W_SHELL", "W_NC_CLUSTER", "W_LIFT_DENSITY", "W_BOOST", "W_GATE"}
+              "SPREAD_CAP", "W_VENT", "W_ARMOR_UNDER", "PRIORITY_UNDER_MULT", "W_ARMOR_OVER", "W_SIDE", "W_CENTER", "W_PATTERN", "W_SHELL", "W_NC_CLUSTER", "W_LIFT_DENSITY", "W_BOOST", "W_GATE", "W_RES_OFF"}
 # What each booster boosts (measured on the top-100 ships); unknown boosters boost any combat room.
 COMBAT_TAGS = ["reactor", "shield", "priority", "laser", "antiair", "missile", "hangar", "antimissile", "antitele",
                "boarding", "crewsupport", "cloak", "shieldsupport", "command", "utility", "combat"]
@@ -203,7 +203,8 @@ def build_module(cfg, source_path):
     # multiprocessing is not available in the browser and the single-process driver never uses it
     src = src.replace("from multiprocessing import Pool, Value", "Pool = Value = None")
     injection, meta = build_injection(cfg)
-    src = src.replace(MARKER, injection + "\n" + MARKER, 1)
+    # all settings on the marker's own line, so line numbers in tracebacks and profiles match the file
+    src = src.replace(MARKER, "; ".join(injection.split("\n")) + "  " + MARKER, 1)
     sys.argv = ["ship_layout_finder.py"]     # the optimizer reads --hull/--top50 from argv at import time
     mod = types.ModuleType("ship_layout_finder")
     mod.__dict__["__file__"] = "ship_layout_finder.py"
@@ -262,6 +263,7 @@ def layout_json(m, res):
         pattern=info.get("pattern", 0.0), boosted_rooms=info.get("boosted", 0), gate_score=info.get("gate", 0.0),
         sweet_spot_shortfall=info["range_under"], sweet_spot_excess=info["range_over"],
         center_rooms=len(getattr(m, "CENTER_IDX", ())), center_distance=info.get("center_dist", 0.0),
+        resource_rooms_off_resource=info.get("res_off", 0),
     )
     res_tiles = sorted([list(t) for t in getattr(m, "RES_TILES", ())], key=lambda t: (t[1], t[0]))
     cp = info.get("center_point") if getattr(m, "CENTER_IDX", None) else None
@@ -307,8 +309,14 @@ def deck_state(m, rng, period, offset, nlifts):
     def put(r, x, y):
         pos[r] = (x, y)
         occ.update((xx, yy) for yy in range(y, y + m.ROOMS[r][3]) for xx in range(x, x + m.ROOMS[r][2]))
+    res_first = bool(getattr(m, "RES_TILES", None)) and hasattr(m, "on_resource")
     for r in order:
         w, h = m.ROOMS[r][2], m.ROOMS[r][3]
+        if res_first and r in m.RES_IDX:              # resource rooms: resource space ('r' tiles) first
+            spots = [(x, y) for y in range(H - h + 1) for x in range(W - w + 1) if fits(r, x, y) and m.on_resource(x, y, w, h)]
+            if spots:
+                put(r, *spots[0])
+                continue
         if h == 2:
             placed = False
             for d in sorted(decks, key=lambda d: abs(d - mid) * (1 if pri[r] < 2 else -1) + rng.random() * 0.5):
@@ -420,13 +428,19 @@ def _fill_free(m, st, anchored):
         occ.update((x, y) for y in range(y0, y1 + 1))
     if len(occ) != sum(m.ROOMS[r][2] * m.ROOMS[r][3] for r in anchored) + sum(y1 - y0 + 1 for _, y0, y1 in st["lifts"]):
         return False                                  # copied rooms / lifts overlap each other
+    res_first = bool(getattr(m, "RES_TILES", None)) and hasattr(m, "on_resource")
     for r in sorted((r for r in range(m.NR) if r not in anchored), key=lambda r: -m.ROOMS[r][2] * m.ROOMS[r][3]):
         w, h = m.ROOMS[r][2], m.ROOMS[r][3]
         spot = None
-        for y in range(m.H - h + 1):
-            for x in range(m.W - w + 1):
-                if m.rect_ok(x, y, w, h, r) and not any((xx, yy) in occ for yy in range(y, y + h) for xx in range(x, x + w)):
-                    spot = (x, y)
+        # resource rooms try resource space ('r' tiles) first, then anywhere they are allowed
+        for want_res in ((True, False) if res_first and r in m.RES_IDX else (False,)):
+            for y in range(m.H - h + 1):
+                for x in range(m.W - w + 1):
+                    if (m.rect_ok(x, y, w, h, r) and (not want_res or m.on_resource(x, y, w, h))
+                            and not any((xx, yy) in occ for yy in range(y, y + h) for xx in range(x, x + w))):
+                        spot = (x, y)
+                        break
+                if spot:
                     break
             if spot:
                 break
@@ -457,6 +471,9 @@ def run(cfg_json, source_path, emit_fn):
     base_seed = int(sc.get("seed", 1))
     stagnation = max(0, int(sc.get("stagnation", 0)))
     pop_size = max(1, int(sc.get("population", 12)))
+    # clean-up budget in seconds (default: scaled to the time limit); the benchmark sets it high so that a
+    # restart-limited run gives the same result on a busy or an idle machine
+    cleanup_s = sc.get("cleanup_seconds")
     eps = 0.1
     BATCH = 4                                   # adapt move odds every few restarts
     upr = iters + polish
@@ -637,7 +654,7 @@ def run(cfg_json, source_path, emit_fn):
     if best is not None and hasattr(m, "final_touch"):
         emit(dict(type="log", msg="Final clean-up of the best layouts..."))
         rngf = random.Random(base_seed ^ 0xF1)
-        deadline = time.time() + max(4.0, min(20.0, 0.12 * (time_limit or 60)))
+        deadline = time.time() + (float(cleanup_s) if cleanup_s else max(4.0, min(20.0, 0.12 * (time_limit or 60))))
         cands = [best] + [r for _, r in sorted(population, key=lambda p: -p[0]) if r[2]["state"] != best[2]["state"]][:2]
         m.tick = lambda n: None                  # no time-limit stop inside the clean-up (it has its own deadline)
         for res0 in cands:
@@ -656,7 +673,7 @@ def run(cfg_json, source_path, emit_fn):
         # Layouts that were not cleaned up but still have cut-off combat rooms: reconnect them too, so the
         # alternatives shown are not cut off either (each repair is bounded by its own, hull-sized budget).
         if getattr(m, "CONNECT_ALL", False) and hasattr(m, "repair_connections"):
-            deadline2 = time.time() + max(3.0, min(15.0, len(m.ALL_TILES) / 40.0))
+            deadline2 = time.time() + (float(cleanup_s) if cleanup_s else max(3.0, min(15.0, len(m.ALL_TILES) / 40.0)))
             fixed = []
             for sc0, res0 in population:
                 if time.time() > deadline2:
@@ -664,7 +681,7 @@ def run(cfg_json, source_path, emit_fn):
                 if res0[2].get("unreach", 0) <= 0:
                     continue
                 try:
-                    st2, r2 = m.repair_connections(m.clone(res0[2]["state"]), res0, rngf)
+                    st2, r2 = m.repair_connections(m.clone(res0[2]["state"]), res0, rngf, moves=True)
                 except Exception:
                     continue
                 if r2 is not res0 and r2 and r2[0] != res0[0]:

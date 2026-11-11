@@ -183,3 +183,25 @@ summary::-webkit-details-marker { display: none; }
 button.linkbtn { min-height: 32px; }
 .note.warn { background: #3a2a14; border: 1px solid #7a5a22; color: #ffd9a0; border-radius: 6px; padding: 8px 10px; font-size: 13px; margin: 8px 0; }
 .note.warn div + div { margin-top: 4px; }
+
+/* ---- results: zoom, comparison, phone tables ---- */
+.zoombar { margin: 4px 0 0; }
+#layoutSvg.zoomed svg { max-width: none; }
+table.compare th[scope=row] { font-weight: 500; color: var(--muted); }
+table.compare td.num, table.compare th.num { text-align: right; font-variant-numeric: tabular-nums; }
+table.compare td.best { color: #7fe0a0; font-weight: 600; }
+table.compare td.best::after { content: " \2713"; }
+table.compare td.cur { background: rgba(74, 168, 255, .08); }
+table.compare th .linkbtn.active { color: var(--text); text-decoration: underline; }
+#compareBox { margin: 0 0 6px; }
+td.nowrap, th.nowrap { white-space: nowrap; }
+#restoredNote { margin: 6px 0; }
+@media (max-width: 600px) {
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stat { font-size: 12px; }
+  th, td { padding: 4px 5px; }
+  /* room table: colour swatch instead of the type name, so all columns fit without sideways scrolling */
+  #inventory .tlabel { display: none; }
+  #inventory td.typecell i { width: 12px; height: 12px; margin: 0; }
+  #planTable .badge { margin-left: 3px; padding: 0 5px; font-size: 11px; }
+}

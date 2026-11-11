@@ -13,6 +13,16 @@ const Recommender = (() => {
   const DROP_ORDER = ["noncombat", "resource", "booster", "command", "crewsupport", "cloak", "shieldsupport", "antitele",
     "antimissile", "antiair", "utility", "combat", "boarding", "laser", "missile", "hangar", "crew", "priority"];
 
+  // rooms every ship keeps, whatever the build: the most Bedrooms the ship level allows and the Fleet Council.
+  // The game data has no bedroom limit per ship level (MaxCount is 0); every top-100 ship (all ship level 14) has
+  // exactly 3 Bedrooms, the most the game allows. A level's own MaxCount in data/rooms.json wins when it has one.
+  const BEDROOM = "Bedroom", COUNCIL = "Fleet Council";
+  const BEDROOM_MAX = 3;
+  const bedroomMax = (level, d) => (d && d.maxCount ? d.maxCount : BEDROOM_MAX);
+  // how many of one room a ship may have (0 = no limit known)
+  const ONE_PER_SHIP = new Set(["fleet council"]);
+  const maxFor = (g, d) => (d && d.maxCount) || (ONE_PER_SHIP.has(g.name.toLowerCase()) || (g.special && g.type === "Bedroom") ? 1 : 0);
+
   const buildKey = (p, s) => (p ? p + (s && s !== p ? "+" + s : "") : "");
   function buildName(p, s) {
     if (!p) return "";
@@ -82,11 +92,31 @@ const Recommender = (() => {
   function recommend(analysis, opts) {
     const rows = opts.rows;
     const hullTiles = rows.join("").replace(/[^xr]/g, "").length;
-    const level = opts.level == null || opts.level === "" ? null : +opts.level;
+    // no ship level (or 0 / not a number, e.g. a hull without one): every room level is allowed
+    const lvIn = opts.level == null || opts.level === "" ? NaN : +opts.level;
+    const level = lvIn >= 1 ? lvIn : null;
     const prof = profileFor(analysis, opts.primary, opts.secondary);
     const notes = [], locked = [];
-    const items = [];               // {fam, design, cat, count, min}
+    const items = [];               // {g, d, cat, count, min, fallback, required}
     const essentialWeapons = new Set([opts.primary, opts.secondary].filter(Boolean));
+    const noBux = !opts.special;
+    // may this family be suggested? (event / premium / starbase rooms only when asked for)
+    const allowed = (g) => !!g && !g.station && (opts.special || GameRooms.buyable(g));
+    const pickDesign = (g) => GameRooms.bestFor(g, level, noBux);
+
+    // required rooms first: they are never left out to make space
+    const required = new Map();     // lower-case family name -> item
+    for (const [name, want] of [[BEDROOM, null], [COUNCIL, 1]]) {
+      const g = GameRooms.find(name);
+      if (!g) continue;
+      if (!allowed(g)) { notes.push(`${g.name} is an event / premium room here, so it is not added.`); continue; }
+      const d = pickDesign(g);
+      if (!d) { notes.push(`${g.name} needs ship level ${g.minShip}` + (level != null ? ` (this hull is level ${level}).` : ".")); continue; }
+      const n = want == null ? bedroomMax(level, d) : Math.min(want, maxFor(g, d) || want);
+      const it = { g, d, cat: g.cat, count: n, min: n, required: true };
+      items.push(it); required.set(g.name.toLowerCase(), it);
+    }
+    const requiredIn = (cat) => items.filter((it) => it.required && it.cat === cat).reduce((a, it) => a + it.count, 0);
     for (const [cat, [per100]] of Object.entries(prof.cats)) {
       if (!CAT[cat] || cat === "priority" || cat === "utility") continue;
       let target = (per100 * hullTiles) / 100;
@@ -94,23 +124,25 @@ const Recommender = (() => {
       if (WEAPON_SET.has(cat) && !essentialWeapons.has(cat)) {
         if (target < 0.75) continue;                 // a weapon this build only dabbles in
       }
-      const min = ESSENTIAL.has(cat) && share >= 0.7 ? 1 : essentialWeapons.has(cat) ? 1 : 0;
-      let n = Math.max(min, Math.round(target));
+      const req = requiredIn(cat);
+      const min = Math.max(0, (ESSENTIAL.has(cat) && share >= 0.7 ? 1 : essentialWeapons.has(cat) ? 1 : 0) - req);
+      // required rooms (Bedrooms, Fleet Council) already count towards this category
+      let n = Math.max(min, Math.round(target) - req);
       if (!n) continue;
       // room families top ships of this build use, limited to what this ship level can build
       const fams = [];
-      for (const [name, , , perShip, shipShare] of prof.families(cat)) {
+      for (const [name, , , perShip] of prof.families(cat)) {
         const g = GameRooms.find(name);
-        if (!g) continue;
-        if (g.special && !opts.special) continue;   // event / premium rooms (starbux, rewards, one level only)
-        const d = GameRooms.bestFor(g, level);
+        if (!g || required.has(g.name.toLowerCase())) continue;
+        if (!allowed(g)) continue;                   // event / premium rooms (starbux, rewards, one or two levels only)
+        const d = pickDesign(g);
         if (!d) { locked.push({ name: g.name, cat, minShip: g.minShip }); continue; }
         fams.push({ g, d, w: perShip });
       }
       if (!fams.length) {
-        // nothing the top ships use is available: fall back to any game room of this category at this level
-        const alt = GameRooms.ofCategory(cat).filter((g) => !g.special && g.designs.length > 2 && !/^(destroyed|station)\b/i.test(g.name))
-          .map((g) => ({ g, d: GameRooms.bestFor(g, level) })).filter((x) => x.d)
+        // nothing the top ships use is available: fall back to any buyable game room of this category at this level
+        const alt = GameRooms.ofCategory(cat).filter((g) => GameRooms.buyable(g) && g.designs.length > 2 && !required.has(g.name.toLowerCase()) && !/^(destroyed|station)\b/i.test(g.name))
+          .map((g) => ({ g, d: pickDesign(g) })).filter((x) => x.d)
           .sort((a, b) => b.g.designs.length - a.g.designs.length || b.d.level - a.d.level);
         if (alt.length) fams.push({ g: alt[0].g, d: alt[0].d, w: 1, fallback: true });
       }
@@ -120,7 +152,8 @@ const Recommender = (() => {
       const counts = apportion(n, top.map((f) => f.w));
       top.forEach((f, i) => {
         let c = counts[i];
-        if (f.d.maxCount) c = Math.min(c, f.d.maxCount);
+        const mx = maxFor(f.g, f.d);
+        if (mx) c = Math.min(c, mx);
         if (c > 0) items.push({ g: f.g, d: f.d, cat, count: c, min: i === 0 ? min : 0, fallback: f.fallback });
       });
     }
@@ -128,7 +161,8 @@ const Recommender = (() => {
     // power: reactors must cover what the rooms use
     const powerOf = () => items.reduce((a, it) => [a[0] + it.d.power * it.count, a[1] + it.d.powerGen * it.count], [0, 0]);
     let [use, make] = powerOf();
-    const reactors = items.filter((it) => it.cat === "reactor" && it.d.powerGen > 0)
+    // reactors that may get more copies: allowed (no starbux / event reactor unless asked) and below their limit
+    const reactors = items.filter((it) => it.cat === "reactor" && it.d.powerGen > 0 && allowed(it.g) && !(noBux && it.d.bux) && !maxFor(it.g, it.d))
       .sort((a, b) => b.d.powerGen / (b.g.w * b.g.h) - a.d.powerGen / (a.g.w * a.g.h));
     // top ships' reactors make only about half of what all their rooms could draw at once
     const ratio = prof.powerRatio || analysis.recommend.power_ratio || [0.5, 0.5, 0.55];
@@ -174,14 +208,15 @@ const Recommender = (() => {
     const rooms = items.filter((it) => it.count > 0).map((it) => ({
       name: it.g.name, cat: it.cat, w: it.g.w, h: it.g.h, count: it.count, short: it.g.short,
       level: it.d.level, minShip: it.d.minShip, power: it.d.power, powerGen: it.d.powerGen, fallback: !!it.fallback,
+      required: !!it.required, special: !!(it.g.special || it.d.bux),
     }));
     const order = ROOM_CATEGORIES.map((c) => c.id);
-    rooms.sort((a, b) => order.indexOf(a.cat) - order.indexOf(b.cat) || b.count - a.count);
+    rooms.sort((a, b) => b.required - a.required || order.indexOf(a.cat) - order.indexOf(b.cat) || b.count - a.count);
     const lockedUniq = [...new Map(locked.map((l) => [l.name, l])).values()].sort((a, b) => (a.minShip || 0) - (b.minShip || 0));
     return {
       build: buildName(opts.primary, opts.secondary), level, hullTiles, rooms, armor, liftTiles,
       power: { use, make, top: ratio[1], range: [ratio[0], ratio[2]], build: prof.power }, notes, locked: lockedUniq, basis: prof.exact ? prof.ships : 0, ranks: prof.ranks,
-      tiles: roomTiles(),
+      tiles: roomTiles(), special: !!opts.special,
     };
   }
   return { WEAPONS, buildKey, buildName, knownBuilds, recommend };

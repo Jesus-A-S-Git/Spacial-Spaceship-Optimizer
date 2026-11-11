@@ -34,7 +34,7 @@ ship-optimizer-site/
 │   ├── build_room_list.py       writes data/rooms.json
 │   ├── pixyship_fetch_layouts.py   fetches the top-100 ladder layouts from PixyShip
 │   ├── analyze_top.py           analyses them (patterns, priors)
-│   └── benchmark_top.py         measures how close the optimizer gets to real top ships (16 ships, 4 setups)
+│   └── benchmark_top.py         measures how close the optimizer gets to real top ships (16 ships, 4 setups); --save / --compare check engine changes
 ├── .github/workflows/refresh-ships.yml   rebuilds all data every two weeks (ships, rooms, top 100)
 ├── .nojekyll                    tells GitHub Pages to serve files as-is
 └── README.md
@@ -141,8 +141,9 @@ optimizer learned:
   cut-off combat rooms are reconnected, and vents that do not help are removed. A vent passage only counts if it
   serves a combat room or a lift: a bedroom-to-bedroom vent is always removed.
 * **Connect every combat room** (*Armor, lifts and vents*, on by default; optimizer `CONNECT_ALL`, section 14): after
-  each search the optimizer adds the vent or lift that reconnects the most cut-off combat rooms, until all are
-  reachable (if the hull, vent count and lift count allow it).
+  each search the optimizer adds the vent or lift, or makes the small move of a cut-off room, that reconnects the
+  most cut-off combat rooms; when none helps, it closes a short gap in a floor row by sliding rooms sideways. This
+  repeats until all are reachable (if the hull, vent count and lift count allow it).
 
 ## More on the Top 100 page
 
@@ -184,6 +185,62 @@ Command line:
 python3 tools/grab_hull.py "Ship Name"        # writes hull_<name>.txt
 python3 tools/build_ship_list.py              # rebuilds data/ships.json
 ```
+
+## Checking an engine change
+
+Before changing `python/ship_layout_finder.py` or `python/web_driver.py`, save a baseline with the unchanged
+engine, then compare the changed engine against it. `--restarts` gives every ship a fixed amount of search work
+(instead of seconds), so the numbers are the same on a busy or an idle machine and only change when the engine does:
+
+```
+export PYTHONHASHSEED=0
+python3 tools/benchmark_top.py --ships 8 --restarts 6 --seed 1,2,3 --configs top,top+templates --jobs 4 --save /tmp/base.json
+# ... change the engine ...
+python3 tools/benchmark_top.py --ships 8 --restarts 6 --seed 1,2,3 --configs top,top+templates --jobs 4 --compare /tmp/base.json
+```
+
+`--compare` prints the score, armor and cut-off rooms per ship (before / after) and ends with `RESULT: not worse
+than the baseline`, or `RESULT: REGRESSION` and exit status 1 when the mean score or armor drops by more than
+`--tolerance` (default 1%) or more combat rooms are cut off. Keep a change only when it is not worse.
+
+- `--seed 1,2,3` runs every ship once per seed. Any change to the search moves single ships a lot (hundreds of
+  points either way), so one seed alone says little; three seeds (24 runs) is the minimum for a search change.
+  A pure speed-up must give exactly the same numbers.
+- `--jobs 4` runs that many ships at once (one process each, same results as one at a time).
+- `--only 8,14` runs only those ranks (for looking into one ship).
+- Changes that are about speed (more search in the same time, as on the page) also need time mode: run the old
+  engine (`BENCH_SRC=old_ship_layout_finder.py`) and the new one at the same time, each with half the cores, e.g.
+  `--seconds 45 --rounds 2 --jobs 2`. `--rounds` runs like the page: rounds of `--seconds`, each continuing from
+  the best layouts found so far.
+
+Resource space: only resource rooms may sit on `r` tiles (lifts, vents, armor and filler never do), and a
+resource room never straddles `r` and ordinary tiles. When the hull has `r` tiles, every resource room on
+ordinary tiles costs `W_RES_OFF` (default 50), and the search, the starting layouts and the deck / top-100
+starts put resource rooms on `r` tiles first.
+
+## Ship vs ship (mock win rate)
+
+`battle.html` (`js/battle.js`, `css/battle.css`) lets you pick two ships (any top-100 ladder ship, or **My build**: the room
+list and armor count the optimizer page saved in this browser) and shows an estimated chance of winning, the reasons, a
+side-by-side breakdown and both layouts. Links keep the pair (`battle.html?a=r3&b=r60`, `mine` = my build).
+
+**This is a mock estimate, not the game's battle engine.** Crew, AI, research, equipment and real weapon numbers are not
+modelled. Each ship gets its rooms at the best level a level-14 ship can build (`data/rooms.json`). Weapons fire about every
+10 s with random timing; damage grows with the room's power, the ship's power made vs needed (full output at the top-100
+median, `recommend.power_ratio`) and boosters. Shields (pool = rooms' capacity, regen = shield power) absorb lasers, cannons and
+missiles; engines / anti-air / teleport gates stop missiles / fighters / boarding; shots hit a random room and are reduced by the
+armor touching it (armor level % x share of the room's outline). Knocked-out rooms stop working. Hull HP is the same for
+every ship (not in the data), fights last up to 3 minutes, and each side's damage is scaled by a random +-25% per fight for
+what is not modelled. 2000 fights per match-up. All assumed values are in one `BATTLE_CONSTANTS` block at the top of `js/battle.js`;
+the model has no DOM dependency, so `node -e 'const B=require("./js/battle.js")'` can run it.
+
+Checks (Node, all 4950 top-100 pairs, 200 fights each): a ship against itself 49.8% (single pairs at 2000 fights: 48-53%).
+The better-ranked ship wins only **48%** of pairs (48% also when the ranks are 50+ apart). Sweeping armor, shield regen,
+interception, room HP, cloak and per-weapon multipliers (x0.5 to x2) kept it at 47-49%, so nothing was tuned to it: the top 100
+fly nearly the same rooms (rank correlates with no room-based measure by more than |0.2|), and what separates them is what the
+model leaves out. The model does react to real differences: against a copy of itself with half the reactors a ship wins ~100%,
+without shields 83%, without armor 57%. Known quirk: rooms that draw power but do not fight (e.g. engines) lower the power
+share for weapons, so removing them can look like a gain.
 
 ## Run locally
 

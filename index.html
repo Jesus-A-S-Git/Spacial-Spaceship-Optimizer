@@ -3,12 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Find a strong room layout for your Pixel Starships hull in the browser, learned from the top 100 ladder ships.">
+  <meta name="color-scheme" content="dark">
   <title>Ship Layout Optimizer</title>
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
   <header>
-    <nav class="topnav"><a href="index.html" class="active">Optimizer</a><a href="analyze.html">Top 100 analysis</a></nav>
+    <nav class="topnav" aria-label="Site"><a href="index.html" class="active" aria-current="page">Optimizer</a><a href="analyze.html">Top 100 analysis</a><a href="battle.html">Ship vs ship</a></nav>
     <h1>Ship Layout Optimizer</h1>
     <p>Finds where to put rooms, armor, lifts and vents on your ship. Runs entirely in your browser.</p>
     <ol class="steps" id="steps">
@@ -23,7 +25,7 @@
       <div class="toolbar">
         <button id="startBtn" class="primary" disabled>Start search</button>
         <button id="stopBtn" disabled>Stop</button>
-        <span id="status" class="status">Loading Python runtime...</span>
+        <span id="status" class="status" role="status" aria-live="polite">Loading Python runtime...</span>
       </div>
       <div class="bar"><div id="barFill"></div></div>
       <div id="progressText" class="muted"></div>
@@ -43,15 +45,25 @@
         <p class="muted">Want ideas first? The <a href="analyze.html">Top 100 analysis</a> shows what the best players build and can open their hulls and builds here.</p>
       </div>
 
-      <div id="altTabs" class="tabs" hidden></div>
+      <div id="staleNote" class="note warn" hidden></div>
+      <div id="restoredNote" class="muted" hidden></div>
+      <div id="altTabs" class="tabs" role="group" aria-label="Found layouts" hidden></div>
       <div id="scoreNote" class="muted" hidden></div>
+      <details id="compareBox" class="sub" hidden>
+        <summary>Compare the found layouts</summary>
+        <div class="tablewrap"><table id="compareTable" class="compare"></table></div>
+        <p class="muted">Best value in each row is marked. Click a column heading to show that layout.</p>
+      </details>
       <div id="layoutWrap" hidden>
+        <div class="toolbar tight zoombar"><button type="button" id="zoomBtn" class="small" aria-pressed="false" title="Show the picture at full size (scroll sideways to see all of it)">Zoom in</button></div>
         <div id="layoutSvg"></div>
         <div id="legend" class="legend"></div>
         <div class="toolbar">
           <button id="copyCoords" class="primary">Copy coordinates</button>
+          <button id="dlTxt">Download coordinates (TXT)</button>
           <button id="dlSvg">Download picture (SVG)</button>
           <button id="dlJson">Download layout (JSON)</button>
+          <span id="copyMsg" class="muted" role="status"></span>
         </div>
         <h3>Score <span id="scoreVal"></span></h3>
         <div id="layoutWarn" class="note warn" hidden></div>
@@ -101,7 +113,8 @@
           <textarea id="hull" rows="9" spellcheck="false" aria-label="Hull grid"></textarea>
           <div class="toolbar tight">
             <button id="shipRefresh" class="small" title="Ask the game server for the newest ship list">Get latest ship list from the game</button>
-            <label class="small filebtn" title="A ship list saved from the game API or Pixyship (.json or .xml)">Load ship list file<input type="file" id="shipFile" accept=".json,.xml,.txt" hidden></label>
+            <button type="button" id="shipFileBtn" class="small" title="A ship list saved from the game API or Pixyship (.json or .xml)">Load ship list file</button>
+            <input type="file" id="shipFile" accept=".json,.xml,.txt" hidden>
           </div>
         </details>
         <div class="nextrow"><button type="button" class="primary small" data-tab="rooms">Next: choose rooms →</button></div>
@@ -118,7 +131,7 @@
             <label>Ship level<select id="planLevel"></select></label>
           </div>
           <div id="planBuilds" class="chips buildchips"></div>
-          <label class="inline"><input type="checkbox" id="planSpecial"> Include event and premium rooms</label>
+          <label class="inline" title="Starbux, event and reward rooms, premium bedrooms (Aquarium, Cat House ...) and starter rooms (Captain's Quarters, Coal Reactor). Bedrooms and the Fleet Council are always included."><input type="checkbox" id="planSpecial"> Include event and premium (starbux) rooms</label>
           <div class="toolbar tight">
             <button id="planGo" class="primary small">Recommend rooms</button>
             <span id="planStatus" class="muted"></span>
@@ -178,6 +191,12 @@
       <section class="tabpane" data-tab="advanced" id="secAdvanced" hidden>
         <h2>Advanced</h2>
         <p class="muted">The defaults work well; change these only to steer the search. <button id="resetBtn" class="small">Reset everything to defaults</button></p>
+        <div class="toolbar tight">
+          <button type="button" id="settingsSave" class="small" title="Hull, room list and every setting in one file, e.g. to keep several ships or move to another browser">Save all settings to a file</button>
+          <button type="button" id="settingsLoadBtn" class="small">Load settings file</button>
+          <input type="file" id="settingsLoad" accept=".json,application/json" hidden>
+          <span id="settingsMsg" class="muted" role="status"></span>
+        </div>
         <details class="sub" open>
           <summary>Armor, lifts and vents</summary>
           <div id="structure" class="grid2"></div>

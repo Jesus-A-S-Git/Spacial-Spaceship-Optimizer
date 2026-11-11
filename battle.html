@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Mock win-rate estimate between two Pixel Starships ship layouts from the top 100 ladder (or your own build).">
+  <meta name="color-scheme" content="dark">
+  <title>Ship vs Ship</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/analyze.css">
+  <link rel="stylesheet" href="css/battle.css">
+</head>
+<body>
+  <header>
+    <nav class="topnav" aria-label="Site"><a href="index.html">Optimizer</a><a href="analyze.html">Top 100 analysis</a><a href="battle.html" class="active" aria-current="page">Ship vs ship</a></nav>
+    <h1>Ship vs ship</h1>
+    <p>Pick two ships and see a rough estimate of who wins, and why.</p>
+  </header>
+
+  <main class="single">
+    <p class="disclaimer" role="note"><b>Mock estimate, not the game's battle engine.</b> Crew, AI, research, equipment and real
+      weapon numbers are not modelled. The ships fight with the rooms, levels, armor placement and power they have, in a simple
+      simulation with assumed values (listed in <code>js/battle.js</code>). Use it to compare builds, not to predict a real fight.</p>
+    <div id="loadMsg" class="panel muted" role="status" aria-live="polite">Loading ships...</div>
+
+    <div id="app" hidden>
+      <section class="panel pickers" aria-label="Choose the two ships">
+        <div class="picker pa">
+          <label for="findA"><span class="tag ta">A</span> First ship</label>
+          <input type="search" id="findA" placeholder="Search rank, player or hull" autocomplete="off" aria-describedby="countA">
+          <select id="pickA" size="6" aria-label="First ship"></select>
+          <span id="countA" class="muted"></span>
+        </div>
+        <div class="vsbtns">
+          <button type="button" id="swap" title="Swap A and B" aria-label="Swap ships A and B">&#8646; Swap</button>
+          <button type="button" id="mirror" title="Fight A against itself" aria-label="Fight ship A against itself (should be about 50%)">A vs A</button>
+        </div>
+        <div class="picker pb">
+          <label for="findB"><span class="tag tb">B</span> Second ship</label>
+          <input type="search" id="findB" placeholder="Search rank, player or hull" autocomplete="off" aria-describedby="countB">
+          <select id="pickB" size="6" aria-label="Second ship"></select>
+          <span id="countB" class="muted"></span>
+        </div>
+        <p id="mineNote" class="muted full"></p>
+      </section>
+
+      <section class="panel" id="result" aria-live="polite" aria-busy="true">
+        <h2>Estimated chance of winning</h2>
+        <div id="odds"></div>
+        <p id="verdict" class="muted"></p>
+        <h3>Why</h3>
+        <ul id="why"></ul>
+      </section>
+
+      <div class="ships">
+        <section class="panel" id="shipA" aria-label="Ship A"></section>
+        <section class="panel" id="shipB" aria-label="Ship B"></section>
+      </div>
+      <div class="legend" aria-hidden="true">
+        <span><i style="background:#e6b93c"></i>Armor</span><span><i style="background:#38c6d9"></i>Lift</span><span><i style="background:#f5f5f5"></i>Vent</span>
+        <span>Hover a room for its name.</span>
+      </div>
+
+      <section class="panel">
+        <h2>Breakdown</h2>
+        <p class="muted">Static numbers come from the rooms each ship has; "avg" numbers are averages over the simulated fights. Green marks the better side.</p>
+        <div id="breakdown" class="tablewrap free"></div>
+      </section>
+
+      <details class="panel how">
+        <summary>How the estimate works</summary>
+        <ul class="muted">
+          <li>Every room is taken at the best level a level-14 ship can build (the layouts do not say which level each room has).</li>
+          <li>Each weapon fires a volley about every 10 seconds (with random timing). Its damage grows with the power the room draws,
+            times the power the ship makes compared with what its rooms need (full output at the top-100 median, as top ships never power everything),
+            plus 5% per booster room.</li>
+          <li>Lasers, cannons and missiles hit shields first; fighters and boarding do not. Engines shoot down missiles, anti-air shoots down fighters,
+            and teleport gates stop boarding, more often the more of them a ship has. Cloak makes some shots miss, radar cancels it.</li>
+          <li>Shots hit a random room. Armor next to that room reduces the damage by the armor's level (Lv16: 22%) times how much of the room's outline touches armor.
+            Rooms that take too much damage stop working (no repairs: no crew), so losing reactors costs power and losing shield rooms costs shields.</li>
+          <li>Both ships have the same hull HP (hull HP is not in the data). A fight ends when a hull reaches zero, or after 3 minutes (more hull left wins).</li>
+          <li>Each fight scales each side's damage by a random &plusmn;25% for everything not modelled. 2000 fights give the percentage.</li>
+          <li>Checks: a ship against itself comes out at about 50% (48-53% for single ships). Across all 4950 pairs of top-100 ships the better-ranked ship wins only 48%
+            of the time: the top 100 run nearly the same rooms, so what separates them (crew, research, play) is exactly what this model leaves out.</li>
+        </ul>
+      </details>
+    </div>
+  </main>
+
+  <footer class="muted">Data: top 100 of the PixyShip ladder and the official room list, refreshed every two weeks by the repository's GitHub Action.</footer>
+
+  <script src="js/categories.js"></script>
+  <script src="js/hulls.js"></script>
+  <script src="js/gamerooms.js"></script>
+  <script src="js/top.js"></script>
+  <script src="js/battle.js"></script>
+</body>
+</html>

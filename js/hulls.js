@@ -127,11 +127,73 @@ const Hulls = (() => {
     }
     return exact.concat(starts, has).slice(0, limit);
   }
+  // ---- Extended hulls: tiles the Extended version adds to its base hull are resource space ----
+  // "Doom Sphere Extended" = "Doom Sphere" + extra tiles, and in the game those extra tiles only take resource rooms.
+  // Finds the base hull (same name without " Extended", same ship level when there is one), aligns the two grids
+  // (every usable base tile must land on a usable Extended tile) and marks the Extended-only tiles as "r".
+  // Returns { rows, count, base, offset, warn } or { error } (then the hull should be left unchanged).
+  const EXT_RE = /\s+extended\s*$/i;
+  const isExtended = (name) => EXT_RE.test(String(name || ""));
+  function alignInside(base, ext) {
+    // every offset [dy, dx] that puts all usable base tiles on usable ext tiles
+    const E = new Set(), eList = [], B = [];
+    ext.forEach((r, y) => { for (let x = 0; x < r.length; x++) if (r[x] !== ".") { E.add(y + "," + x); eList.push([y, x]); } });
+    base.forEach((r, y) => { for (let x = 0; x < r.length; x++) if (r[x] !== ".") B.push([y, x]); });
+    if (!B.length) return [];
+    const out = [];
+    for (const [ey, ex] of eList) {          // the first base tile has to land on some ext tile
+      const dy = ey - B[0][0], dx = ex - B[0][1];
+      if (B.every(([y, x]) => E.has((y + dy) + "," + (x + dx)))) out.push([dy, dx]);
+    }
+    return out;
+  }
+  function extendedResources(ship, list) {
+    list = list || ships || [];
+    if (!ship || !isExtended(ship.name)) return { error: "not an Extended hull" };
+    const baseName = ship.name.replace(EXT_RE, "").trim().toLowerCase();
+    const all = list.filter((s) => s !== ship && s.name.trim().toLowerCase() === baseName);
+    if (!all.length) return { error: `no base hull named "${ship.name.replace(EXT_RE, "").trim()}" in the ship list` };
+    const same = ship.level != null ? all.filter((s) => s.level === ship.level) : [];
+    const pool = same.length ? same : all;
+    const fits = [];
+    for (const b of pool) {
+      const offs = alignInside(b.rows, ship.rows);
+      if (!offs.length) continue;
+      // several positions fit (e.g. a plain rectangle): the game draws both grids from the same corner, so take [0, 0]
+      const off = offs.length === 1 ? offs[0] : offs.find(([dy, dx]) => !dy && !dx);
+      if (!off) { fits.push({ b, ambiguous: offs.length }); continue; }
+      const tiles = b.rows.join("").replace(/\./g, "").length;
+      const rows = ship.rows.map((r, y) => [...r].map((c, x) => {
+        if (c !== "x") return c;
+        const by = y - off[0], bx = x - off[1], br = b.rows[by];
+        return br && bx >= 0 && bx < br.length && br[bx] !== "." ? "x" : "r";
+      }).join(""));
+      fits.push({ b, off, tiles, rows, count: rows.join("").split("r").length - 1 });
+    }
+    const ok = fits.filter((f) => f.rows).sort((p, q) => q.tiles - p.tiles);
+    const baseLabel = ship.name.replace(EXT_RE, "").trim();
+    if (!ok.length) {
+      return { error: fits.length ? `the ${baseLabel} hull fits inside the Extended one in ${fits[0].ambiguous} places, so it is unclear which tiles were added`
+        : `the ${baseLabel} hull${same.length ? "" : " (any level)"} does not fit inside the Extended hull's tiles` };
+    }
+    const best = ok[0];
+    if (ok.some((f) => f.tiles === best.tiles && f.rows.join("/") !== best.rows.join("/"))) {
+      return { error: `several ${baseLabel} hulls match equally well and mark different tiles` };
+    }
+    if (!best.count) return { error: `the Extended hull adds no tiles to ${baseLabel}` };
+    let warn = "";
+    if (!same.length && ship.level != null && best.b.level != null && best.b.level !== ship.level) {
+      warn = `No level ${ship.level} ${baseLabel} in the ship list, so the level ${best.b.level} one was used: ` +
+        `tiles the level ${ship.level} upgrade added may be marked too. Check the grid.`;
+    }
+    return { rows: best.rows, count: best.count, base: { name: best.b.name, level: best.b.level, id: best.b.id }, offset: best.off, warn };
+  }
+
   function byId(id) { return ships ? ships.find((s) => s.id === id) || null : null; }
   function byRows(rows) {
     if (!ships) return [];
     const key = rows.join("/").replace(/r/g, "x");
     return ships.filter((s) => s.rows.join("/") === key);
   }
-  return { load, loadFile, search, parseText, byId, byRows, get count() { return ships ? ships.length : 0; }, get source() { return sourceLabel; } };
+  return { load, loadFile, search, parseText, byId, byRows, isExtended, extendedResources, get count() { return ships ? ships.length : 0; }, get source() { return sourceLabel; } };
 })();

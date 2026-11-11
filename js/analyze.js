@@ -10,9 +10,23 @@ function el(tag, attrs, ...kids) {
   return e;
 }
 const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
-const fmt = (v, d = 1) => (v == null ? "-" : (+v).toFixed(d).replace(/\.0+$/, ""));
-const pct = (v) => (v == null ? "-" : Math.round(v * 100) + "%");
+// number with up to d decimals ("2.50" -> "2.5" is not trimmed, "2.0" -> "2"); never "-0"
+const fmt = (v, d = 1) => {
+  if (v == null || !isFinite(+v)) return "-";
+  const t = (+v).toFixed(d).replace(/\.0+$/, "");
+  return /^-0(\.0*)?$/.test(t) ? t.slice(1) : t;
+};
+const signed = (v, d) => (+v > 0 && fmt(v, d) !== "0" ? "+" : "") + fmt(v, d);
+const pct = (v) => (v == null || !isFinite(+v) ? "-" : Math.round(v * 100) + "%");
 const show = (id) => { $(id).hidden = false; };
+// readable text colour (near-black or white) on a #rrggbb background
+function inkFor(hex) {
+  const m = /^#([0-9a-f]{6})$/i.exec(String(hex).trim());
+  if (!m) return "#fff";
+  const lin = [0, 2, 4].map((i) => { const c = parseInt(m[1].slice(i, i + 2), 16) / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; });
+  const L = 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2];
+  return (L + 0.05) / 0.05 > 1.05 / (L + 0.05) ? "#0c111b" : "#fff";
+}
 const swatch = (c) => el("i", { style: `background:${c}` });
 const optimizerLink = (id) => `index.html?ship=${encodeURIComponent(id)}`;
 const planLink = (key, id) => `index.html?build=${encodeURIComponent(key)}` + (id != null ? `&ship=${encodeURIComponent(id)}` : "");
@@ -28,7 +42,8 @@ function tiles(a) {
     ...(p.vents ? [[p.vents[1], "service vents per ship (median)"]] : []),
     [a.aa_center ? fmt(a.aa_center[1]) : "-", "tiles from anti-air to the combat middle (median)"],
     ...(a.recommend && a.recommend.power_ratio ? [[pct(a.recommend.power_ratio[1]), "of their rooms' full power made by reactors (median)"]] : []),
-    ...(a.insights ? [[pct(a.insights.tiers.reduce((x, t) => x + t.fill * t.ships, 0) / a.ships), "of the hull filled with rooms, armor, lifts and vents"]] : []),
+    ...(a.insights && a.insights.tiers && a.insights.tiers.length ? [[pct(a.insights.tiers.reduce((x, t) => x + t.fill * t.ships, 0) /
+      a.insights.tiers.reduce((x, t) => x + t.ships, 0)), "of the hull filled with rooms, armor, lifts and vents (average)"]] : []),
   ];
   $("tiles").replaceChildren(...items.map(([v, t]) => el("div", { class: "tile" }, el("b", { text: String(v) }), el("span", { text: t }))));
 }
@@ -50,21 +65,28 @@ function hullTable(a) {
 }
 
 // ---------------------------------------------------------------- bars
-function hbars(box, rows, max, unit) {
+// rows: {label, color, q: [q1, median, q3]} (bar = median, whisker = middle half) or {label, color, v} (one value, no whisker)
+function hbars(box, rows, max, unit, valText) {
   box.replaceChildren();
-  rows.forEach(({ label, color, q }) => {
-    const [lo, med, hi] = q;
-    const track = el("div", { class: "track", title: `${label}: median ${fmt(med)}${unit || ""}, middle half of ships ${fmt(lo)}-${fmt(hi)}` },
-      el("div", { class: "fill", style: `width:${(med / max) * 100}%` }),
-      el("div", { class: "iqr", style: `left:${(lo / max) * 100}%;width:${Math.max(0.5, ((hi - lo) / max) * 100)}%` }));
-    box.append(el("div", { class: "lab" }, ...(color ? [swatch(color)] : []), document.createTextNode(label)), track, el("div", { class: "val", text: fmt(med) }));
+  if (!(max > 0)) max = 1;
+  const w = (x) => Math.max(0, Math.min(100, (x / max) * 100));
+  rows.forEach(({ label, color, q, v }) => {
+    const single = q == null;
+    const [lo, med, hi] = single ? [v, v, v] : q;
+    const title = single ? `${label}: ${valText ? valText(med) : fmt(med) + (unit || "")}`
+      : `${label}: median ${fmt(med)}${unit || ""}, middle half ${fmt(lo)}-${fmt(hi)}`;
+    const track = el("div", { class: "track", title },
+      el("div", { class: "fill", style: `width:${w(med)}%` }),
+      ...(single ? [] : [el("div", { class: "iqr", style: `left:${w(lo)}%;width:${Math.max(0.5, w(hi) - w(lo))}%` })]));
+    box.append(el("div", { class: "lab" }, ...(color ? [swatch(color)] : []), document.createTextNode(label)), track,
+      el("div", { class: "val", text: valText ? valText(med) : fmt(med) }));
   });
 }
 
 function roomBars(a) {
   const rows = ROOM_CATEGORIES.map((c) => ({ label: c.label, color: c.color, q: a.per_ship["cat:" + c.id] || [0, 0, 0] }))
     .filter((r) => r.q[2] > 0);
-  hbars($("roomBars"), rows, Math.max(...rows.map((r) => r.q[2])), " rooms");
+  hbars($("roomBars"), rows, Math.max(1, ...rows.map((r) => r.q[2])), " rooms");
   const t = $("popTable");
   t.replaceChildren(el("tr", {}, el("th", { text: "Type" }), el("th", { text: "Room" }), el("th", { class: "num", text: "Per ship" }), el("th", { class: "num", text: "Ships with it" })));
   ROOM_CATEGORIES.forEach((c) => (a.popular_rooms[c.id] || []).slice(0, 5).forEach(([name, per, share], i) => {
@@ -84,7 +106,7 @@ function edgeBars(a) {
     const w = (Math.abs(v) / max) * 50;
     const track = el("div", { class: "track", title: `${c.label}: ${pct(share)} of its outline is hull edge (average room ${pct(a.edge_overall)})` },
       el("div", { class: "zero" }), el("div", { class: "fill " + (v >= 0 ? "pos" : "neg"), style: `width:${w}%` }));
-    box.append(el("div", { class: "lab" }, swatch(c.color), document.createTextNode(c.label)), track, el("div", { class: "val", text: (v > 0 ? "+" : "") + fmt(v, 2) }));
+    box.append(el("div", { class: "lab" }, swatch(c.color), document.createTextNode(c.label)), track, el("div", { class: "val", text: signed(v, 2) }));
   });
 }
 
@@ -113,7 +135,7 @@ function adjTable(a) {
       const v = d.log2;
       const bg = inUse ? mix(MID, v >= 0 ? POS : NEG, Math.min(1, Math.abs(v) / 1.5)) : "#2a3043";
       tr.append(el("td", {
-        style: `background:${bg}`, text: inUse ? (v > 0 ? "+" : "") + v.toFixed(1) : "",
+        style: `background:${bg};color:${inkFor(bg)}`, text: inUse ? (v > 0 ? "+" : "") + v.toFixed(1) : "",
         title: `${r.label} next to ${c.label}: ${d.observed} times, chance would give ${d.expected}` + (inUse ? ` (log2 ${v.toFixed(2)})` : " (too rare, not used)"),
       }));
     });
@@ -152,7 +174,7 @@ const BENCH_NAMES = {
 };
 function benchmark(a) {
   const b = a.benchmark;
-  if (!b) { $("benchText").textContent = "No benchmark in this data yet (it runs with the GitHub Action every two weeks)."; return; }
+  if (!b || !b.configs || !b.configs.length) { $("benchText").textContent = "No benchmark in this data yet (it runs with the GitHub Action every two weeks)."; return; }
   const n = b.configs[0].ships;
   $("benchText").replaceChildren(
     el("p", { text: `${n} top-100 ships (even ranks): the optimizer got the same hull, the same rooms and the same armor count as the real ` +
@@ -171,12 +193,12 @@ function benchmark(a) {
       ...b.configs.map((c) => {
         const v = c.optimizer[k];
         let note = "";
-        if (k === "armor_sum") note = ` (${Math.round((100 * v) / real)}%)`;
+        if (k === "armor_sum" && real > 0 && v != null) note = ` (${Math.round((100 * v) / real)}%)`;
         return el("td", { class: "num", text: show(v, d) + note });
       })));
   });
   t.append(el("tr", {}, el("td", { text: "Ships where the optimizer's armor value is at least the real ship's" }), el("td"),
-    ...b.configs.map((c) => el("td", { class: "num", text: `${c.armor_at_least_real} of ${c.ships}` }))));
+    ...b.configs.map((c) => el("td", { class: "num", text: c.armor_at_least_real != null ? `${c.armor_at_least_real} of ${c.ships}` : "-" }))));
 }
 
 // ---------------------------------------------------------------- builds
@@ -185,7 +207,7 @@ function buildsSection(a) {
   if (!b) return false;
   const box = $("buildBars");
   box.replaceChildren();
-  const max = Math.max(...b.summary.map((g) => g.ships));
+  const max = Math.max(1, ...b.summary.map((g) => g.ships));
   b.summary.forEach((g) => {
     const track = el("div", { class: "track", title: `${g.build}: ${g.ships} of the top 100, best rank #${g.best_rank}, median rank #${fmt(g.median_rank, 0)}, average ${g.trophies} trophies` },
       el("div", { class: "fill", style: `width:${(g.ships / max) * 100}%` }));
@@ -263,7 +285,7 @@ function tiersSection(a) {
     const bar = el("div", { class: "bar" });
     keys.forEach((k) => {
       const n = m.primary[k] || 0;
-      if (n) bar.append(el("span", { style: `width:${(100 * n) / m.ships}%;background:${color(k)}`, title: `${m.label}: ${n} of ${m.ships} ships run mainly ${WEAPON_NAMES[k].toLowerCase()}` }));
+      if (n && m.ships) bar.append(el("span", { style: `width:${(100 * n) / m.ships}%;background:${color(k)}`, title: `${m.label}: ${n} of ${m.ships} ships run mainly ${WEAPON_NAMES[k].toLowerCase()}` }));
     });
     box.append(el("div", { text: m.label }), bar);
   });
@@ -301,7 +323,7 @@ function explorer(a) {
       (pr.power ? ` Power: ${fmt(pr.power.make)} made against ${fmt(pr.power.use)} needed at full power (${pct(pr.power.ratio[1])}).` : "");
     const t = $("exTable");
     t.replaceChildren(el("tr", {}, el("th", { text: "Type" }), el("th", { class: "num", text: "Rooms / 100 tiles" }),
-      el("th", { class: "num", text: "Tiles / 100" }), el("th", { class: "num", text: "Ships with it" }), el("th", { text: "Rooms they use (per ship)" })));
+      el("th", { class: "num", text: "Room tiles / 100", title: "Hull tiles taken by rooms of this type, per 100 hull tiles" }), el("th", { class: "num", text: "Ships with it" }), el("th", { text: "Rooms they use (per ship)" })));
     ROOM_CATEGORIES.filter((c) => pr.cats[c.id]).sort((x, y) => pr.cats[y.id][1] - pr.cats[x.id][1]).forEach((c) => {
       const [n, tiles, share] = pr.cats[c.id];
       const fam = (pr.families[c.id] || []).slice(0, 5).map(([nm, w, h, per]) => `${nm} ${w}x${h} (${fmt(per, 2)})`).join(", ");
@@ -325,9 +347,9 @@ function trophySection(a) {
   box.replaceChildren();
   rows.forEach(([k, v]) => {
     const color = k.startsWith("cat:") ? catOf(k.slice(4)).color : null;
-    const track = el("div", { class: "track", title: `${label(k)}: ${v > 0 ? "+" : ""}${v.toFixed(2)}` },
-      el("div", { class: "zero" }), el("div", { class: "fill " + (v >= 0 ? "pos" : "neg"), style: `width:${Math.min(50, Math.abs(v) * 100)}%` }));
-    box.append(el("div", { class: "lab" }, ...(color ? [swatch(color)] : []), document.createTextNode(label(k))), track, el("div", { class: "val", text: (v > 0 ? "+" : "") + fmt(v, 2) }));
+    const track = el("div", { class: "track", title: `${label(k)}: ${signed(v, 2)}` },
+      el("div", { class: "zero" }), el("div", { class: "fill " + (v >= 0 ? "pos" : "neg"), style: `width:${Math.min(50, Math.abs(v) * 100)}%` }));   // full half-track = +-0.5
+    box.append(el("div", { class: "lab" }, ...(color ? [swatch(color)] : []), document.createTextNode(label(k))), track, el("div", { class: "val", text: signed(v, 2) }));
   });
   return true;
 }
@@ -340,13 +362,16 @@ function powerSection(a) {
   const P = r.all.power;
   const ships = (a.builds ? a.builds.ships : []).filter((s) => s.power && s.power.use);
   const makes = ships.map((s) => s.power.make), uses = ships.map((s) => s.power.use);
-  const same = makes.length && makes.filter((m) => m === P.make || Math.abs(m - P.make) < 0.5).length;
+  // most common power made (most top ships run the same reactor setup); only shown when it is most ships
+  const modeCount = {};
+  makes.forEach((m) => { modeCount[m] = (modeCount[m] || 0) + 1; });
+  const [modeMake, same] = Object.entries(modeCount).sort((x, y) => y[1] - x[1])[0] || [null, 0];
   $("powerTiles").replaceChildren(...[
     [fmt(P.make), "power made by reactors (average)"],
     [fmt(P.use), "power all systems need at full power (average)"],
     [pct(P.ratio[1]), `made / needed (median; middle half ${pct(P.ratio[0])}-${pct(P.ratio[2])})`],
     ...(uses.length ? [[`${Math.min(...uses)}-${Math.max(...uses)}`, "power needed, lowest to highest ship"]] : []),
-    ...(same ? [[`${same} of ${makes.length}`, `ships make exactly ${fmt(P.make)} power`]] : []),
+    ...(same >= makes.length / 2 ? [[`${same} of ${makes.length}`, `ships make exactly ${fmt(modeMake)} power`]] : []),
   ].map(([v, t]) => el("div", { class: "tile" }, el("b", { text: String(v) }), el("span", { text: t }))));
   const name = (k) => {
     const [p, q] = k.split("+");
@@ -368,10 +393,8 @@ function powerSection(a) {
       el("td", { class: "num" + (v !== r.all && Math.abs(diff) >= 0.02 ? (diff > 0 ? " pos" : " neg") : ""), text: pct(p.ratio[1]) }),
       el("td", { class: "num", text: v.ships > 1 ? `${pct(p.ratio[0])}-${pct(p.ratio[2])}` : "-" }), el("td", { class: "buildcell", text: draws })));
   });
-  const drawRows = Object.entries(P.draw).map(([c, f]) => ({ label: catOf(c).label, color: catOf(c).color, q: [f, f, f].map((x) => x * 100) }));
-  hbars($("powerDraw"), drawRows, Math.max(...drawRows.map((d) => d.q[1])), "% of the draw");
-  $("powerDraw").querySelectorAll(".val").forEach((v) => { v.textContent = Math.round(parseFloat(v.textContent)) + "%"; });
-  $("powerDraw").querySelectorAll(".iqr").forEach((v) => v.remove());
+  const drawRows = Object.entries(P.draw).map(([c, f]) => ({ label: catOf(c).label, color: catOf(c).color, v: f }));
+  hbars($("powerDraw"), drawRows, Math.max(...drawRows.map((d) => d.v)), "", pct);
   return true;
 }
 
@@ -387,16 +410,20 @@ function gatesSection(a) {
   const take = [];
   if (sg) {
     const o = sg.lift_other_side[0];
-    take.push(`Security Gates stand at lift exits: ${pct(sg.lift)} have a lift on their left or right, against ${pct(B.lift)} of other combat rooms.` +
+    take.push((sg.lift > B.lift ? "Security Gates stand at lift exits: " : "Security Gates and lifts: ") +
+      `${pct(sg.lift)} have a lift on their left or right, against ${pct(B.lift)} of other combat rooms.` +
       (o ? ` Across from the lift is most often a ${nbLabel(o[0]).toLowerCase()} (${pct(o[1])}); ${pct(sg.reactor)} touch a reactor.` : ""));
   }
   if (ti) {
     const p = g.interdictor_pairs, n = p.reduce((x, [, c]) => x + c, 0), top = p[0];
-    take.push(`Interdictor Gates come in twos (${ti.per_ship.map(([k, c]) => `${c} ships with ${k}`).join(", ")}); ` +
+    const twos = ti.per_ship.length && ti.per_ship[0][0] === 2;
+    take.push(`${twos ? "Interdictor Gates come in twos" : "Interdictor Gates per ship"} (${ti.per_ship.map(([k, c]) => `${c} ships with ${k}`).join(", ")}); ` +
       (top && n ? `${pct(top[1] / n)} of ships with two put them ${top[0]}. ` : "") +
       `${pct(ti.same)} touch the other one and ${pct(ti.security)} touch a Security Gate.`);
-    take.push(`Gates are not sealed in armor: ${pct(ti.sealed)} of Interdictor Gates are closed off by armor and hull edge, and gates get ` +
-      `less armor than other combat rooms (${pct(ti.armor)} / ${pct(sg ? sg.armor : 0)} of their outline against ${pct(B.armor)}).`);
+    const less = ti.armor < B.armor && (!sg || sg.armor < B.armor);
+    take.push(`${ti.sealed < 0.1 ? "Gates are not sealed in armor: " : ""}${pct(ti.sealed)} of Interdictor Gates are closed off by armor and hull edge. ` +
+      `Armor covers ${pct(ti.armor)} of an Interdictor Gate's outline${sg ? ` and ${pct(sg.armor)} of a Security Gate's` : ""}, ` +
+      `against ${pct(B.armor)} for other combat rooms${less ? " (less armor than other combat rooms)" : ""}.`);
   }
   if (g.boarding) take.push(`Ships with 2+ teleport rooms run ${fmt(g.boarding.security, 1)} Security Gates each, others ${fmt(g.other.security, 1)}.`);
   $("gateTake").replaceChildren(el("ul", {}, ...take.map((t) => el("li", { text: t }))));
@@ -421,14 +448,12 @@ function gatesSection(a) {
     text: T[k].neighbours.slice(0, 4).map(([c, v]) => `${nbLabel(c)} ${pct(v)}`).join(", ") })), el("td", { class: "buildcell muted",
     text: B.neighbours.slice(0, 4).map(([c, v]) => `${nbLabel(c)} ${pct(v)}`).join(", ") })));
   const bars = (box, list) => {
-    const rs = list.map(([k, v]) => ({ label: nbLabel(k), color: CAT[k] ? CAT[k].color : null, q: [v, v, v].map((x) => x * 100) }));
-    hbars($(box), rs, Math.max(1, ...rs.map((r) => r.q[1])), "%");
-    $(box).querySelectorAll(".val").forEach((x) => { x.textContent = Math.round(parseFloat(x.textContent)) + "%"; });
-    $(box).querySelectorAll(".iqr").forEach((x) => x.remove());
+    const rs = list.map(([k, v]) => ({ label: nbLabel(k), color: CAT[k] ? CAT[k].color : null, v }));
+    hbars($(box), rs, Math.max(0.01, ...rs.map((r) => r.v)), "", pct);
   };
   if (sg) bars("gateLiftOther", sg.lift_other_side);
   const pn = g.interdictor_pairs.reduce((x, [, c]) => x + c, 0);
-  bars("gatePairs", g.interdictor_pairs.map(([k, c]) => [k, c / pn]));
+  if (pn) bars("gatePairs", g.interdictor_pairs.map(([k, c]) => [k, c / pn]));
   const ct = $("gateCounts");
   ct.replaceChildren(el("tr", {}, el("th", { text: "Ships" }), ...keys.map((k) => el("th", { class: "num", text: T[k].label + "s" }))));
   [["Top 10", g.top10], ["2+ teleport rooms (boarding)", g.boarding], ["Other ships", g.other]].forEach(([n, v]) =>
@@ -465,7 +490,7 @@ function drawShip(l) {
     const label = (short || "").slice(0, rw >= 3 ? 4 : 3);
     out.push(`<g><title>${esc(name)} [${esc(c.label)}] ${rw}x${rh} at ${x}, ${y}</title>` +
       `<rect x="${(x - x0) * T + 1}" y="${(y - y0) * T + 1}" width="${rw * T - 2}" height="${rh * T - 2}" rx="2" fill="${c.color}" stroke="#0c111b"/>` +
-      (rw > 1 ? `<text x="${(x - x0 + rw / 2) * T}" y="${(y - y0 + rh / 2) * T + 4}" text-anchor="middle" fill="#fff" font-size="10" font-weight="600">${esc(label)}</text>` : "") + "</g>");
+      (rw > 1 ? `<text x="${(x - x0 + rw / 2) * T}" y="${(y - y0 + rh / 2) * T + 4}" text-anchor="middle" fill="${inkFor(c.color)}" font-size="10" font-weight="600">${esc(label)}</text>` : "") + "</g>");
   });
   p.armor.forEach(([x, y]) => out.push(`<rect x="${(x - x0) * T + 2}" y="${(y - y0) * T + 2}" width="${T - 4}" height="${T - 4}" fill="#e6b93c"/>`));
   p.vents.forEach(([x, y]) => out.push(`<rect x="${(x - x0) * T + 3}" y="${(y - y0) * T + 3}" width="${T - 6}" height="${T - 6}" fill="#f5f5f5"><title>Service vent ${x}, ${y}</title></rect>`));
@@ -476,7 +501,7 @@ function drawShip(l) {
 function gallery(lays) {
   const sel = $("galPick");
   sel.replaceChildren(...lays.slice().sort((a, b) => a.rank - b.rank).map((l) =>
-    el("option", { value: String(l.rank), text: `#${l.rank} ${l.name} - ${l.ship_name} (${l.trophies} trophies)` })));
+    el("option", { value: String(l.rank), text: `#${l.rank} ${l.name} - ${l.ship_name}` + (l.trophies != null ? ` (${l.trophies} trophies)` : "") })));
   const render = () => {
     const l = lays.find((x) => String(x.rank) === sel.value);
     if (!l) return;
@@ -484,7 +509,7 @@ function gallery(lays) {
     $("galSvg").innerHTML = svg;
     const cnt = {};
     p.rooms.forEach((r) => { cnt[r[4]] = (cnt[r[4]] || 0) + 1; });
-    $("galInfo").textContent = `${l.ship_name}, level ${l.ship_level}${l.alliance ? " - " + l.alliance : ""}: ${p.rooms.length} rooms, ` +
+    $("galInfo").textContent = `${l.ship_name}${l.ship_level != null ? ", level " + l.ship_level : ""}${l.alliance ? " - " + l.alliance : ""}: ${p.rooms.length} rooms, ` +
       `${p.armor.length} armor tiles, ${new Set(p.lifts.map((s) => s[0])).size} lift columns, ${p.vents.length} vents.`;
     $("galLegend").replaceChildren(...ROOM_CATEGORIES.filter((c) => cnt[c.id]).map((c) => el("span", {}, swatch(c.color), document.createTextNode(`${c.label} (${cnt[c.id]})`))),
       el("span", {}, swatch("#e6b93c"), document.createTextNode("Armor")), el("span", {}, swatch("#38c6d9"), document.createTextNode("Lift")), el("span", {}, swatch("#f5f5f5"), document.createTextNode("Vent")));
@@ -525,6 +550,11 @@ Promise.all([Top100.load(), Hulls.load(false).catch(() => null)]).then(() => {
   armor(a); show("secArmor");
   benchmark(a); show("secCalib");
   setupTabs();
+}).catch((e) => {
+  console.error(e);
+  $("loadMsg").hidden = false;
+  $("loadMsg").classList.add("error");
+  $("loadMsg").textContent = "Could not show the top-100 data: " + (e && e.message ? e.message : e) + ". Try reloading the page.";
 });
 
 // ---------------------------------------------------------------- tabs (Overview / Builds / Ships & layouts / Room placement / Optimizer check)
@@ -545,13 +575,34 @@ function setupTabs() {
     const pane = sec && sec.classList.contains("tabpane") ? sec : sec ? sec.closest(".tabpane") : null;
     const name = (pane || panes[0]).dataset.tab;
     panes.forEach((p) => { p.hidden = p.dataset.tab !== name; });
-    document.querySelectorAll("#pageTabs a").forEach((x) => x.classList.toggle("active", x.dataset.tab === name));
+    document.querySelectorAll("#pageTabs a").forEach((x) => {
+      const on = x.dataset.tab === name;
+      x.classList.toggle("active", on);
+      x.setAttribute("aria-selected", on ? "true" : "false");
+      if (on) x.setAttribute("aria-current", "page"); else x.removeAttribute("aria-current");
+    });
     if (sec && !sec.classList.contains("tabpane") && scroll) sec.scrollIntoView({ block: "start" });
     else if (scroll) window.scrollTo(0, 0);
   };
   document.querySelectorAll("#pageTabs a").forEach((x) => { x.href = "#" + x.dataset.tab; });
   // tab ids for the panes so #builds works
-  panes.forEach((p) => { if (!p.id) p.id = p.dataset.tab; });
+  panes.forEach((p) => {
+    if (!p.id) p.id = p.dataset.tab;
+    p.setAttribute("role", "tabpanel");
+  });
+  document.querySelectorAll("#pageTabs a").forEach((x) => x.setAttribute("aria-controls", x.dataset.tab));
+  // arrow keys move between tabs (ARIA tab pattern)
+  $("pageTabs").addEventListener("keydown", (e) => {
+    const tabs = [...document.querySelectorAll("#pageTabs a")];
+    const i = tabs.indexOf(document.activeElement);
+    if (i < 0) return;
+    const j = e.key === "ArrowRight" ? (i + 1) % tabs.length : e.key === "ArrowLeft" ? (i + tabs.length - 1) % tabs.length
+      : e.key === "Home" ? 0 : e.key === "End" ? tabs.length - 1 : -1;
+    if (j < 0) return;
+    e.preventDefault();
+    tabs[j].click();
+    tabs[j].focus();
+  });
   window.addEventListener("hashchange", () => open(location.hash, true));
   open(location.hash, !!location.hash);
 }
