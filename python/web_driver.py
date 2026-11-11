@@ -457,6 +457,9 @@ def run(cfg_json, source_path, emit_fn):
     base_seed = int(sc.get("seed", 1))
     stagnation = max(0, int(sc.get("stagnation", 0)))
     pop_size = max(1, int(sc.get("population", 12)))
+    # clean-up budget in seconds (default: scaled to the time limit); the benchmark sets it high so that a
+    # restart-limited run gives the same result on a busy or an idle machine
+    cleanup_s = sc.get("cleanup_seconds")
     eps = 0.1
     BATCH = 4                                   # adapt move odds every few restarts
     upr = iters + polish
@@ -637,7 +640,7 @@ def run(cfg_json, source_path, emit_fn):
     if best is not None and hasattr(m, "final_touch"):
         emit(dict(type="log", msg="Final clean-up of the best layouts..."))
         rngf = random.Random(base_seed ^ 0xF1)
-        deadline = time.time() + max(4.0, min(20.0, 0.12 * (time_limit or 60)))
+        deadline = time.time() + (float(cleanup_s) if cleanup_s else max(4.0, min(20.0, 0.12 * (time_limit or 60))))
         cands = [best] + [r for _, r in sorted(population, key=lambda p: -p[0]) if r[2]["state"] != best[2]["state"]][:2]
         m.tick = lambda n: None                  # no time-limit stop inside the clean-up (it has its own deadline)
         for res0 in cands:
@@ -656,7 +659,7 @@ def run(cfg_json, source_path, emit_fn):
         # Layouts that were not cleaned up but still have cut-off combat rooms: reconnect them too, so the
         # alternatives shown are not cut off either (each repair is bounded by its own, hull-sized budget).
         if getattr(m, "CONNECT_ALL", False) and hasattr(m, "repair_connections"):
-            deadline2 = time.time() + max(3.0, min(15.0, len(m.ALL_TILES) / 40.0))
+            deadline2 = time.time() + (float(cleanup_s) if cleanup_s else max(3.0, min(15.0, len(m.ALL_TILES) / 40.0)))
             fixed = []
             for sc0, res0 in population:
                 if time.time() > deadline2:

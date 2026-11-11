@@ -34,7 +34,7 @@ ship-optimizer-site/
 │   ├── build_room_list.py       writes data/rooms.json
 │   ├── pixyship_fetch_layouts.py   fetches the top-100 ladder layouts from PixyShip
 │   ├── analyze_top.py           analyses them (patterns, priors)
-│   └── benchmark_top.py         measures how close the optimizer gets to real top ships (16 ships, 4 setups)
+│   └── benchmark_top.py         measures how close the optimizer gets to real top ships (16 ships, 4 setups); --save / --compare check engine changes
 ├── .github/workflows/refresh-ships.yml   rebuilds all data every two weeks (ships, rooms, top 100)
 ├── .nojekyll                    tells GitHub Pages to serve files as-is
 └── README.md
@@ -184,6 +184,24 @@ Command line:
 python3 tools/grab_hull.py "Ship Name"        # writes hull_<name>.txt
 python3 tools/build_ship_list.py              # rebuilds data/ships.json
 ```
+
+## Checking an engine change
+
+Before changing `python/ship_layout_finder.py` or `python/web_driver.py`, save a baseline with the unchanged
+engine, then compare the changed engine against it. `--restarts` gives every ship a fixed amount of search work
+(instead of seconds), so the numbers are the same on a busy or an idle machine and only change when the engine does:
+
+```
+python3 tools/benchmark_top.py --ships 8 --restarts 6 --configs top,top+templates --save /tmp/base.json
+# ... change the engine ...
+python3 tools/benchmark_top.py --ships 8 --restarts 6 --configs top,top+templates --compare /tmp/base.json
+```
+
+`--compare` prints the score, armor and cut-off rooms per ship (before / after) and ends with `RESULT: not worse
+than the baseline`, or `RESULT: REGRESSION` and exit status 1 when the mean score or armor drops by more than
+`--tolerance` (default 1%) or more combat rooms are cut off. Keep a change only when it is not worse. For changes
+that are about speed (more search in the same time, as on the page), also compare in time mode (`--seconds 45`,
+one page search round) and run the old engine (`BENCH_SRC=old_ship_layout_finder.py`) at the same time as the new one.
 
 ## Run locally
 

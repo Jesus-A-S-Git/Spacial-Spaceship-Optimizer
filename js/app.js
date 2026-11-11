@@ -375,6 +375,10 @@ function updateRoomSummary() {
   const parts = Object.entries(tot).filter(([, [n]]) => n).map(([k, [n, t]]) => `${KIND_LABELS[k].split(" (")[0]} ${n} (${t} tiles)`);
   box.append(el("div", { class: "muted" + (used > hullTiles ? " bad" : ""), text:
     `${parts.join(" · ") || "No rooms"}. Rooms + ${cfgState.settings.ARMOR_COUNT || 0} armor = ${used} of ${hullTiles} hull tiles` + (used > hullTiles ? " (too many!)" : "") }));
+  const pw = powerOf(cfgState.rooms);
+  if (pw) box.append(el("div", { class: "muted" + (pw.use > pw.make ? " bad" : ""),
+    title: "Power all systems draw at full power against what the reactors make (game room data, at each room's level or the best your ship level allows)",
+    text: `Power: ${powerText(pw)}` + (pw.use > pw.make ? " - more than the reactors make: add a reactor or fewer power-hungry rooms." : ".") }));
   updateSteps();
 }
 function buildRooms() {
@@ -878,6 +882,37 @@ function layoutSvg(l) {
   p.push("</svg>");
   return p.join("");
 }
+// ---------------------------------------------------------------- power: rooms' draw vs reactors' output
+// Game data (data/rooms.json): a room's design at the level the room list gives it (set by the recommender),
+// else the best level the hull's ship level allows. Rooms with a custom name have no known power.
+function roomDesign(name, level) {
+  const g = GameRooms.count ? GameRooms.find(name) : null;
+  if (!g || !g.designs || !g.designs.length) return null;
+  if (level != null && level !== "") { const d = g.designs.find((x) => x.level === +level); if (d) return d; }
+  const ship = currentShip();
+  return GameRooms.bestFor(g, ship ? ship.level : null);
+}
+// list: [{name, level, count}] -> {use, make, known, unknown} (counts of rooms), null when no room is known
+function powerOf(list) {
+  const p = { use: 0, make: 0, known: 0, unknown: 0 };
+  list.forEach((r) => {
+    const n = r.count == null ? 1 : +r.count || 0;
+    if (!n) return;
+    const d = roomDesign(r.name, r.level);
+    if (!d) { p.unknown += n; return; }
+    p.known += n; p.use += (d.power || 0) * n; p.make += (d.powerGen || 0) * n;
+  });
+  return p.known ? p : null;
+}
+function powerText(p) {
+  return `${p.use} used / ${p.make} made` + (p.make ? ` (${Math.round((100 * p.use) / p.make)}%)` : "") +
+    (p.unknown ? `, ${p.unknown} room${p.unknown > 1 ? "s" : ""} with unknown power not counted` : "");
+}
+// the found layout's rooms, each at the level its room-list row asks for
+function layoutPower(l) {
+  const lv = new Map(cfgState.rooms.filter((r) => r.level != null).map((r) => [String(r.name).toLowerCase(), r.level]));
+  return powerOf(l.rooms.map((r) => { const name = r.label || r.name; return { name, level: lv.get(String(name).toLowerCase()), count: 1 }; }));
+}
 function renderLayout() {
   const l = layouts[activeIdx];
   if (!l) return;
@@ -908,6 +943,9 @@ function renderLayout() {
     ["Sweet-spot shortfall / excess", `${s.sweet_spot_shortfall.toFixed(0)} / ${s.sweet_spot_excess}`],
     ["Unused open tiles", s.unused_open_tiles], ["Priority spread", s.priority_spread.toFixed(1)],
   ];
+  const pw = layoutPower(l);
+  if (pw) defs.unshift(["Power used / made" + (pw.unknown ? `; ${pw.unknown} room${pw.unknown > 1 ? "s" : ""} with unknown power not counted` : ""),
+    `${pw.use} / ${pw.make}` + (pw.make ? ` (${Math.round((100 * pw.use) / pw.make)}%)` : ""), pw.use > pw.make]);
   if (s.boosted_rooms != null && l.rooms.some((r) => r.cat === "booster")) defs.push(["Rooms touching their booster", s.boosted_rooms]);
   const gates = gateHabits(l);
   if (gates) defs.push(...gates);
@@ -1124,7 +1162,9 @@ function renderPlan(r) {
     const pw = x.powerGen ? `+${x.powerGen * x.count}` : x.power ? `-${x.power * x.count}` : "";
     const tip = `${x.name} Lv ${x.level} [${c.label}]` + (x.minShip != null ? `, needs ship level ${x.minShip}` : "");
     t.append(el("tr", { title: tip }, el("td", { class: "num", text: String(x.count) }),
-      el("td", { class: "typecell" }, el("i", { style: `background:${c.color}` }), document.createTextNode(x.name + (x.fallback ? " *" : ""))),
+      el("td", { class: "typecell" }, el("i", { style: `background:${c.color}` }), document.createTextNode(x.name + (x.fallback ? " *" : "")),
+        ...(x.required ? [el("span", { class: "badge", text: "required", title: "Every ship keeps these: always added, never left out to make space" })] : []),
+        ...(x.special ? [el("span", { class: "badge", text: "event/premium", title: "Event, premium (starbux) or reward room" })] : [])),
       el("td", { text: `${x.w}x${x.h}` }), el("td", { class: "num", text: String(x.level) }), el("td", { class: "num", text: pw })));
   });
   const notes = r.notes.slice();
@@ -1135,6 +1175,9 @@ function renderPlan(r) {
       (b ? `: ${b.make} made against ${b.use} needed on average. They power systems as needed, not all at once.` : "."));
   }
   else notes.unshift("Room tiers are not in this site's room list yet, so every room level is allowed (they arrive with the next data refresh).");
+  const req = r.rooms.filter((x) => x.required);
+  if (req.length) notes.push(`Required: ${req.map((x) => `${x.count} ${x.name}`).join(" and ")} (the most this ship level allows) are always included and are never left out to make space.`);
+  if (!r.special) notes.push("Event and premium rooms (starbux, rewards, premium bedrooms, starter rooms) are left out; tick Include event and premium rooms to allow them.");
   if (r.rooms.some((x) => x.fallback)) notes.push("* No room top ships use for this type is available at this level; a room of the same type is suggested instead.");
   if (r.locked.length && r.level != null) {
     notes.push("Not available yet at level " + r.level + ": " + r.locked.slice(0, 8).map((l) => `${l.name} (level ${l.minShip})`).join(", ") + (r.locked.length > 8 ? ", ..." : "") + ".");
@@ -1237,6 +1280,7 @@ GameRooms.load().then((n) => {
   saveSettings();
   $("roomLibNote").textContent = `Type a room name to use one of ${n} game rooms (real size and type filled in automatically; list from ${GameRooms.updated}).`;
   buildRooms();
+  if (layouts[activeIdx]) renderLayout();          // power of the shown layout needs the game room data
 });
 updateSavedNote();
 ensurePool(1);

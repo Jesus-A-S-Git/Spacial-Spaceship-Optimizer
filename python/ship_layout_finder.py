@@ -2044,12 +2044,14 @@ def polish(state, rng, steps, weights=None, policy=None):
         if policy is not None:
             policy.record(act, BAD_REWARD if sc == float("-inf") else max(-1.0, min(1.0, (sc - cs) / REWARD_SCALE)))
         if sc != float("-inf") and sc >= cs:
-            r = finalize(n)
-            if r:
-                if sc > cs + 1e-9:
-                    succ[op] += 1
-                cur, cs, res = n, r[0], r
+            # (score_only is the full finalized score, so the layout is legal and sc is its score: the full
+            # result is built once at the end instead of after every accepted move)
+            if sc > cs + 1e-9:
+                succ[op] += 1
+            cur, cs = n, sc
     tick(steps % TICK)
+    if cur is not state:
+        res = finalize(cur)
     return cur, res, att, succ
 
 
@@ -2688,32 +2690,37 @@ def band_polish(st, res, deadline=None, rounds=8):
     return cur, best
 
 
-def swap_polish(st, res, deadline=None, passes=3):
+def swap_polish(st, res, deadline=None, passes=3, rng=None):
     """Try swapping every pair of same-size rooms that differ in type (e.g. a combat room into a spot beside
     free armor space, a bedroom out of it) and keep each swap that scores better. Swapping equal-size rooms
-    never makes a layout illegal, so this is a cheap way to fix which room sits where."""
+    never makes a layout illegal, so this is a cheap way to fix which room sits where.
+    With rng the most valuable pairs go first (a priority room, then combat <-> non-combat) in a random order
+    within each group, so clean-ups cut short by their deadline (every search round cleans up its best layout
+    again) do not keep trying the same first pairs."""
     cur, best = st, res
     groups = defaultdict(list)
     for r in range(NR):
         groups[(ROOMS[r][2], ROOMS[r][3])].append(r)
     tags = _TAGS
+    pairs = [(a, b) for rooms in groups.values() for i, a in enumerate(rooms) for b in rooms[i + 1:]
+             if not (tags[a] == tags[b] and ROOM_KIND[a] == ROOM_KIND[b] and ROOM_BOOSTS[a:a + 1] == ROOM_BOOSTS[b:b + 1]
+                     and ROOM_GATES[a:a + 1] == ROOM_GATES[b:b + 1])]    # (identical rooms: a swap changes nothing)
+    if rng is not None:
+        # most valuable swaps first (a priority room, then combat <-> non-combat), random order within each
+        tier = lambda p: (0 if p[0] in PRIORITY_SET or p[1] in PRIORITY_SET else 1 if ROOM_KIND[p[0]] != ROOM_KIND[p[1]] else 2)
+        keyed = [(tier(p), rng.random(), p) for p in pairs]
+        pairs = [p for _, _, p in sorted(keyed)]
     for _ in range(passes):
         improved = False
-        for rooms in groups.values():
-            for i in range(len(rooms)):
-                for j in range(i + 1, len(rooms)):
-                    a, b = rooms[i], rooms[j]
-                    if (tags[a] == tags[b] and ROOM_KIND[a] == ROOM_KIND[b] and ROOM_BOOSTS[a:a + 1] == ROOM_BOOSTS[b:b + 1]
-                            and ROOM_GATES[a:a + 1] == ROOM_GATES[b:b + 1]):
-                        continue                       # identical rooms: a swap changes nothing
-                    if deadline and time.time() > deadline:
-                        return cur, best
-                    pos = list(cur["pos"])
-                    pos[a], pos[b] = pos[b], pos[a]
-                    cand = dict(pos=pos, lifts=cur["lifts"], vents=cur["vents"])
-                    r = finalize(cand)
-                    if r and r[0] > best[0] + 1e-6:
-                        cur, best, improved = cand, r, True
+        for a, b in pairs:
+            if deadline and time.time() > deadline:
+                return cur, best
+            pos = list(cur["pos"])
+            pos[a], pos[b] = pos[b], pos[a]
+            cand = dict(pos=pos, lifts=cur["lifts"], vents=cur["vents"])
+            r = finalize(cand)
+            if r and r[0] > best[0] + 1e-6:
+                cur, best, improved = cand, r, True
         if not improved:
             break
     return cur, best
@@ -2722,8 +2729,13 @@ def swap_polish(st, res, deadline=None, passes=3):
 def final_touch(st, res, rng, deadline=None):
     """Clean-up for a finished layout: swap same-size rooms, slide decks/columns, reconnect combat rooms,
     drop unneeded vents."""
-    st, res = swap_polish(st, res, deadline)
+    # The room swaps get at most half the time, so the deck/column slides always get their turn (on big hulls
+    # one pass of swaps used to take the whole clean-up budget); time the slides leave goes to more swaps.
+    half = time.time() + 0.5 * (deadline - time.time()) if deadline else None
+    st, res = swap_polish(st, res, half, rng=rng)
     st, res = band_polish(st, res, deadline)
+    if deadline:
+        st, res = swap_polish(st, res, deadline, rng=rng)
     if CONNECT_ALL:
         st, res = repair_connections(st, res, rng)
     if st["vents"]:
