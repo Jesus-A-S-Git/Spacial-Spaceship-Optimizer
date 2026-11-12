@@ -1,50 +1,57 @@
-/* Ship vs ship page (battle.html). Loaded after style.css and analyze.css. */
-:root { --sa: #4aa8ff; --sb: #e8894a; }
-.disclaimer { background: #2a2414; border: 1px solid #6b5520; color: #f3e2b5; border-radius: 8px; padding: 10px 12px; font-size: 13px; margin: 0 0 16px; }
-.disclaimer code { font-size: 12px; }
-.tag { display: inline-block; min-width: 20px; padding: 0 6px; border-radius: 4px; text-align: center; font-weight: 700; color: #04121f; font-size: 13px; }
+/* Ship vs ship page (battle.html). Loaded after theme.css, style.css and analyze.css. */
+:root { --sa: #5cb4ff; --sb: #ff9a4d; --sa-dim: #173a5e; --sb-dim: #4a2a14; }
+.disclaimer { margin: 0 0 var(--s5); }
+.disclaimer code { font-size: var(--fs-xs); background: rgba(0, 0, 0, .3); }
+.tag {
+  display: inline-grid; place-items: center; min-width: 22px; height: 22px; padding: 0 5px;
+  font: 400 12px/1 var(--font-pixel); color: var(--accent-ink); vertical-align: 1px;
+  box-shadow: inset -2px -2px 0 rgba(0, 0, 0, .3), inset 2px 2px 0 rgba(255, 255, 255, .35);
+}
 .tag.ta { background: var(--sa); }
 .tag.tb { background: var(--sb); }
 
-.pickers { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 12px; align-items: start; }
-.picker { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.picker label { font-weight: 600; }
-.picker select { width: 100%; background: #0c111b; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px; font: inherit; font-size: 14px; }
-.picker select:focus, .picker input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
-.picker.pa select { border-left: 3px solid var(--sa); }
-.picker.pb select { border-left: 3px solid var(--sb); }
-.vsbtns { display: flex; flex-direction: column; gap: 8px; padding-top: 28px; }
+.pickers { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: var(--s4); align-items: start; }
+.picker { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.picker label { font: 600 var(--fs-md)/1.3 var(--font-display); display: flex; align-items: center; gap: 8px; }
+.picker select { width: 100%; padding: 4px; font-size: 14px; }
+.picker select option:checked { background: var(--accent-dim); color: var(--text); }
+.picker.pa select { border-left: 6px solid var(--sa); }
+.picker.pb select { border-left: 6px solid var(--sb); }
+.vsbtns { display: flex; flex-direction: column; gap: 12px; padding-top: 34px; }
 .pickers .full { grid-column: 1 / -1; margin: 0; }
 
-.odds { margin: 8px 0; }
-.oddslabels { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; font-size: 14px; }
-.oddslabels b { font-size: 26px; line-height: 1; }
+.odds { margin: var(--s3) 0; }
+.oddslabels { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; font-size: 14px; }
+.oddslabels b { font: 600 34px/1 var(--font-body); margin-right: 4px; }
 .oddslabels .sa b { color: var(--sa); }
 .oddslabels .sb b { color: var(--sb); }
-.oddsbar { display: flex; height: 18px; border-radius: 6px; overflow: hidden; background: var(--track); }
-.oddsbar .fa { background: var(--sa); }
-.oddsbar .fb { background: var(--sb); border-left: 2px solid var(--bg); }
-#why { margin: 4px 0 0; padding-left: 20px; }
-#why li { margin: 3px 0; }
-#result h3 { font-size: 15px; margin: 12px 0 4px; }
+.oddsbar { display: flex; height: 22px; padding: 2px; background: var(--well); border: 2px solid var(--border); }
+.oddsbar .fa { background: repeating-linear-gradient(90deg, var(--sa) 0 10px, #4596d9 10px 12px); }
+.oddsbar .fb { background: repeating-linear-gradient(90deg, var(--sb) 0 10px, #d9813f 10px 12px); border-left: 2px solid var(--well); }
+#why { margin: 4px 0 0; padding-left: 0; list-style: none; }
+#why li { margin: 4px 0; padding-left: 18px; position: relative; }
+#why li::before { content: ""; position: absolute; left: 2px; top: .6em; width: 6px; height: 6px; background: var(--accent); }
+#result h3 { font-size: var(--fs-md); margin: var(--s4) 0 4px; }
 
-.ships { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 4px; }
+.ships { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s5); margin-bottom: 4px; }
 .ships .panel { min-width: 0; margin-bottom: 0; }
-.ships h3 { margin: 0 0 4px; font-size: 16px; overflow-wrap: anywhere; }
+.ships h3 { margin: 0 0 4px; font: 600 var(--fs-lg)/1.3 var(--font-body); overflow-wrap: anywhere; display: flex; align-items: center; gap: 8px; }
 .ships .layoutbox svg { width: 100%; }
-.ships + .legend { margin: 6px 0 16px; }
+.ships + .legend { margin: var(--s3) 0 var(--s5); }
 
 table.cmp th, table.cmp td { vertical-align: top; }
-table.cmp th[scope=row] { font-weight: 500; }
+table.cmp th[scope=row] { font-weight: 500; color: var(--text); font-size: var(--fs-sm); }
 table.cmp th[scope=row] small { display: block; color: var(--muted); font-size: 11px; font-weight: 400; }
 table.cmp th.sub { padding-left: 20px; color: var(--muted); }
-table.cmp thead th { position: static; }
-table.cmp thead th.ca { color: var(--sa); }
-table.cmp thead th.cb { color: var(--sb); }
-table.cmp tr.grp th { color: var(--accent); text-transform: uppercase; letter-spacing: .05em; font-size: 11px; padding-top: 10px; position: static; }
+table.cmp th { position: static; }
+table.cmp thead th.ca, table.cmp th.ca { color: var(--sa); }
+table.cmp thead th.cb, table.cmp th.cb { color: var(--sb); }
+table.cmp tr.grp th {
+  color: var(--accent); text-transform: uppercase; letter-spacing: .06em; font: 400 12px/1.4 var(--font-pixel);
+  padding-top: 16px; position: static; box-shadow: inset 0 -2px 0 var(--border);
+}
 table.cmp td { white-space: nowrap; }
-table.cmp td.win { color: #8fd19e; font-weight: 600; }
-.vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+table.cmp td.win { color: var(--good); font-weight: 600; }
 details.how { border-top: 0; }
 details.how ul { padding-left: 20px; }
 
@@ -52,16 +59,16 @@ details.how ul { padding-left: 20px; }
   .pickers { grid-template-columns: minmax(0, 1fr); }
   .vsbtns { flex-direction: row; padding-top: 0; }
   .vsbtns button { flex: 1; }
-  .ships { grid-template-columns: minmax(0, 1fr); }
+  .ships { grid-template-columns: minmax(0, 1fr); gap: var(--s4); }
   .picker select { font-size: 15px; }
   table.cmp td { white-space: normal; }
+  .oddslabels b { font-size: 30px; }
 }
-.topnav { flex-wrap: wrap; }
 
 /* weapon matchups */
-table.mu td.verdict { font-size: 12px; white-space: nowrap; }
+table.mu td.verdict { font-size: var(--fs-xs); white-space: nowrap; }
 table.mu td.vhard { color: #ff8a80; font-weight: 600; }
-table.mu td.vcountered { color: #ffb74d; }
+table.mu td.vcountered { color: var(--warn); }
 table.mu td.vpartly { color: var(--muted); }
-table.mu td.vgets { color: #81c784; font-weight: 600; }
-table.mu .tag { margin-right: 2px; }
+table.mu td.vgets { color: var(--good); font-weight: 600; }
+table.mu .tag { margin-right: 4px; }
