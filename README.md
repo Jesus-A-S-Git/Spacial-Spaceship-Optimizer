@@ -224,32 +224,79 @@ starts put resource rooms on `r` tiles first.
 list and armor count the optimizer page saved in this browser) and shows an estimated chance of winning, the reasons, a
 side-by-side breakdown and both layouts. Links keep the pair (`battle.html?a=r3&b=r60`, `mine` = my build).
 
-**This is a mock estimate, not the game's battle engine.** Crew, AI, research, equipment and real weapon numbers are not
-modelled. Each ship gets its rooms at the best level a level-14 ship can build (`data/rooms.json`). Weapons fire about every
-10 s with random timing; damage grows with the room's power, the ship's power made vs needed (full output at the top-100
-median, `recommend.power_ratio`) and boosters. Shields (pool = rooms' capacity, regen = shield power) absorb lasers, cannons and
-missiles. Each weapon type has a counter with a stopping capacity that refills every volley (`COUNTER`, `GATE_POWER`): engines
-stop missiles, anti-air stops hangar craft, Interdictor Gates / Repulsors stop boarders, so a few missiles into many engines are
-almost all stopped while a big missile load swamps a few engines. Traps (Security Gate, Disintegrator Gate, gas traps) cut the
-damage of boarders that land, and boarders ignore shields and armor. The **Weapon matchups** table shows, per weapon type,
-how much of its damage the enemy's counter stopped. Other shots hit a random room and are reduced by the
-armor touching it (armor level % x share of the room's outline). Knocked-out rooms stop working. Hull HP is the same for
-every ship (not in the data), fights last up to 3 minutes, and each side's damage is scaled by a random +-25% per fight for
-what is not modelled. 2000 fights per match-up. All assumed values are in one `BATTLE_CONSTANTS` block at the top of `js/battle.js`;
-the model has no DOM dependency, so `node -e 'const B=require("./js/battle.js")'` can run it.
+**This is a mock estimate, not the game's battle engine.** Crew (boarding fights, repairs, abilities), AI and targeting,
+research, equipment, the ammo players load, crew damage, area damage, stun and percentage hull damage are not modelled.
+Each ship gets its rooms at the best level a level-14 ship can build. 2000 fights per match-up, in 0.25 s steps, up to
+3 minutes each (then the ship with more hull left wins); each side's damage is scaled by a random +-25% per fight for what
+is not modelled. The model has no DOM dependency (`node -e 'const B=require("./js/battle.js")'`), and every constant is in
+one `BATTLE_CONSTANTS` block at the top of `js/battle.js`, tagged **[data]**, **[source]** or **[assumed]**.
 
-Checks (Node, all 4950 top-100 pairs, 200 fights each): a ship against itself 49.8% (single pairs at 2000 fights: 48-53%).
-`node tools/test_battle.js` checks self-matches and that each counter works: adding engines, Interdictor Gates, traps,
-anti-air or shield generators to a ship stops more of the matching weapon and does not lower its win chance; the same engines
-stop 91% of an 11-power missile load but 66% of a 41-power one.
+How a fight runs:
 
-Rank: the better-ranked ship wins about **50%** of pairs (`node tools/test_battle.js --rank`; 48% before the counters were
-added). On the first version of the model, sweeping armor, shield regen, interception, room HP, cloak and per-weapon
-multipliers (x0.5 to x2) kept it at 47-49%, so nothing was tuned to it: the top 100
-fly nearly the same rooms (rank correlates with no room-based measure by more than |0.2|), and what separates them is what the
-model leaves out. The first version also reacted to real differences: against a copy of itself with half the reactors a ship wins ~100%,
-without shields 83%, without armor 57%. Engines draw power, but now pay for themselves: removing a top-100 ship's engines lowers its win chance by
-13 points on average and by 37 points against missile-heavy ships (20+ missile power).
+- **Weapons** fire on their own reload + cooldown (+ volley time), slower when power is short (power made / needed below
+  the top-100 median). Each projectile has its own shield, system, AP and hull damage, EMP and fire length. Lasers,
+  cannons and craft shots hit the **shield** while it is up and only take shield points off it; **missiles go around
+  shields**. Other hits land on a random room: system damage is cut by the room's **armor**, comes off the room and the
+  hull; a destroyed room passes system damage to the hull; AP damage ignores armor; EMP switches the room off; fire burns
+  AP damage each second.
+- **Shields**: pool = the shield rooms' Capacity; each shield room restores its points every reload.
+- **Armor**: room defence D = the room's own defence bonus + armor value x share of its outline touching armor;
+  damage reduction = D / (100 + D).
+- **Engines** dodge missiles from an evasion pool (sum of the engines' dodge modifiers) that refills 4% (Engine) or 3%
+  (Ship Thrusters) per second; each dodge uses some of it, so a few missiles into many engines are nearly all dodged
+  while a big missile load swamps a few engines (saturation).
+- **Hangars** keep one craft out; it attacks on its own reload until the enemy's **anti-craft** rooms (decoys first)
+  shoot down its HP, and is replaced after the hangar's reload.
+- **Boarding**: each teleport lands a party that does a fixed amount of system damage, ignoring shields and armor, unless
+  a ready **Interdictor Gate / Repulsor** stops it; **traps'** crew damage cuts what the party does.
+- **Cloak** hides the ship (the enemy holds fire) for its duration every reload; an enemy **radar** ends it when it fires.
+
+The **Weapon matchups** table shows, per weapon type, how much of its damage the enemy's counter stopped (dodged, shot
+down, blocked, soaked by shields or lost to cloak).
+
+**Real vs assumed.** From the game's own data (official API, `data/rooms.json`): per-room power, reload, cooldown,
+volley, per-projectile shield / system / AP / hull damage, EMP and fire length, shield points and restore, engine dodge
+modifiers, armor values and rooms' own defence bonus, anti-craft damage, trap crew damage, cloak and radar times, craft HP
+and attack stats. From sources: ticks are 1/40 s and the defence formula D / (100 + D) (YaDc bot,
+github.com/PieInTheSky-Inc/YaDc `src/pss_room.py`, `src/utils/convert.py`); missiles bypass shields, AP damage ignores
+armor and does not reach the hull from a destroyed room, fire damage per second = remaining fire ticks / 500 (Pixel
+Starships wiki, as quoted and checked against captured battles by github.com/TounSec/PSS-BattleStats
+`crates/pss-designs/src/lib.rs`, `crates/pss-stats/src/lib.rs`); engine evasion regeneration 4% / Ship Thrusters 3%,
+Teleport Repulsor reload 8 s, anti-craft shoots decoys first (official patch notes v0.999.60, 17 Aug 2026, as saved in
+PSS-BattleStats `docs/blog_patch_notes_v0_999_60.xml`). **Assumed** (no source found): hull HP (35 for every ship: the
+level-12 Titans' value; level-13/14 hull HP is not in any data we could read), room HP (1 per tile), the 3-minute limit,
+that system damage on a room also comes off the hull, how armor adjacency counts, how the evasion pool is spent (10 points
+per dodge, 90% at most), which shots engines can dodge (missiles only), gates' and traps' strength, boarding damage (2 per
+landing), one craft per hangar, the default ammo (Rocket Level 7 in missile launchers, Ion Beam 6 in Ion Cannons,
+Interceptor Lv9 in hangars, Decoy Drone in decoy bays: launchers and hangars fire the item the player loads), boosters
+(+5% each), the power rule and the +-25% luck.
+
+**Where the weapon data comes from.** `tools/build_room_list.py` now also keeps each room's combat fields (`reload`,
+`cooldown`, `defBonus`, `restore`, `shot`, `craft`) and adds an `ammo` table from `RoomService/ListMissileDesigns` and
+`ListCraftDesigns`, so the regular refresh from the live API fills them for every room. The live API, PixyShip and the wiki
+could not be reached from where this was built, so the combat fields in the current `data/rooms.json` were merged
+(`--merge-into`, which keeps every existing room field) from official API responses recorded in 2024 (RoomDesignVersion
+932) in the test cassettes of github.com/PSS-Tools-Development/pssapi.py (`tests/cassettes/room_service/*.yaml`).
+They cover 478 of the 798 room designs; most top-100 rooms are level-13/14 designs added later, so they use the highest
+older level of the same room (so later balance changes are missing), and rooms with no combat stats at all (Turbo Laser,
+Missile Pod, Torpedo Launcher, Gamma Beam Emitter, Shield Capacitor / Overcharger, Mass Teleporter, Tractor Beam Emitter,
+Warp / Corvette / Tactical Hangar, ...) use a typical real room of the same type. Their power, capacity and size are
+always current data. The breakdown counts those rooms
+("Rooms with estimated combat stats"). Running `python3 tools/build_room_list.py` with internet replaces all of this with
+current data.
+
+Checks: `node tools/test_battle.js` (self-matches 48-52% at 1500 fights; each counter works in the right direction:
+adding engines, Interdictor Gates, traps, anti-craft or shield generators stops more of the matching weapon and does not
+lower the defender's win chance; engines dodge 90% of an 11-power missile load but 75% of a 41-power one; plus: the stats
+come from the game data, missiles are never soaked by shields, armor cuts lasers but not boarders, cloak makes shots miss
+and an enemy radar ends it; against a copy of itself with half the reactors a ship wins ~96%, without shields ~74%,
+without engines ~71%, without armor ~55%).
+
+Rank: the better-ranked ship wins **48.4%** of the 4950 top-100 pairs (`node tools/test_battle.js --rank`, 80 fights per
+pair); the earlier version with made-up weapon numbers gave 50.2%. Changing the main assumptions one at a time (room HP x3,
+boarding damage x0.5 / x2, hull HP x2, 6-minute fights, dodge cost x0.5 / x2, no luck, armor x3, other craft ammo) kept it
+at 47-49%, so nothing was tuned to it: the top 100 fly nearly the same rooms, and what separates them (crew, AI,
+research, equipment) is what the model leaves out.
 
 ## Run locally
 
