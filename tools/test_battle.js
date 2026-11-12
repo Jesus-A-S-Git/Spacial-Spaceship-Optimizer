@@ -2,7 +2,9 @@
 //  - a ship against itself is close to 50%
 //  - each counter works in the right direction: adding engines stops more missiles, Interdictor Gates stop boarders,
 //    anti-air stops craft, more shields soak more lasers, and the ship that gets the counter wins more often
-// Run: node tools/test_battle.js
+//  - the rooms use the game's own numbers (data/rooms.json) and the mechanics behave: missiles skip shields, armor
+//    cuts laser damage but not boarders', cloak makes shots miss and radar ends it, power and shields matter
+// Run: node tools/test_battle.js            (add --rank for the better-ranked ship's win rate over all top-100 pairs)
 "use strict";
 const fs = require("fs"), path = require("path");
 const root = path.join(__dirname, "..");
@@ -51,6 +53,54 @@ check("lasers vs shields", "laser", "Shield", "Shield Generator", 3, 2, 4);
   const share = (r) => r.a.role.missile.stopped / Math.max(1e-9, r.a.role.missile.dmg);   // engines only, not shields
   const a = share(BM.duel(small, def, N, 3)), b = share(BM.duel(heavy, def, N, 3));
   ok(a > b + 0.1, `saturation: engines stop ${pct(a)} of a ${small.weaponPower.missile}-power missile load, ${pct(b)} of a ${heavy.weaponPower.missile}-power one`);
+}
+
+// ---------------------------------------------------------------- real data and mechanics
+{
+  const cat = BM.catalogue, pd = cat.get("plasma discharger"), sg = cat.get("shield generator"), eng = cat.get("engine");
+  ok(pd && pd.reload > 0 && pd.shot && pd.shot.sy > 0 && pd.shot.sh > 0,
+    `weapon stats come from the game data: Plasma Discharger reload ${pd && pd.reload} s, ${pd && JSON.stringify(pd.shot)}`);
+  ok(sg && sg.capacity > 0 && sg.restore > 0 && sg.reload > 0, `shield stats: Shield Generator ${sg && sg.capacity} points, +${sg && sg.restore} every ${sg && sg.reload} s`);
+  ok(eng && eng.capacity > 0, `engine dodge modifier from the game data: ${eng && eng.capacity}`);
+  const known = ships.reduce((t, s) => t + s.rooms.filter((r) => (r.shot || r.craft) && r.combatFrom === "data").length, 0);
+  const weap = ships.reduce((t, s) => t + s.rooms.filter((r) => ["laser", "missile", "craft", "board", "antiair"].includes(r.role)).length, 0);
+  console.log(`info weapon / anti-craft rooms in the top 100 with their own level's stats: ${known} of ${weap} (others: older level, same-type room or default ammo)`);
+}
+function variant(i, tag, keep) {      // a copy of top-100 layout i with some rooms removed
+  const c = JSON.parse(JSON.stringify(layouts[i]));
+  c.rooms = c.rooms.filter((r) => keep(r));
+  const s = BM.fromTop(c); s.id += tag; s.label += tag; return s;
+}
+{
+  // missiles go around shields: none of their damage is soaked
+  const mi = ships.map((s, i) => [s.weaponPower.missile, i]).sort((x, y) => y[0] - x[0])[0][1];
+  const r = BM.duel(ships[mi], ships[mi === 10 ? 11 : 10], 400, 5);
+  ok(r.a.role.missile.dmg > 0 && r.a.role.missile.shield === 0, `missiles bypass shields: ${ships[mi].label} missile damage soaked by shields ${r.a.role.missile.shield.toFixed(2)}`);
+  // armor cuts laser damage, not boarders'
+  const li = ships.map((s, i) => [s.weaponPower.laser, i]).sort((x, y) => y[0] - x[0])[0][1];
+  const rl = BM.duel(ships[li], ships[li === 10 ? 11 : 10], 400, 5), bi = ships.findIndex((s) => s.weaponPower.board > 0);
+  const rb = BM.duel(ships[bi], ships[bi === 10 ? 11 : 10], 400, 5);
+  ok(rl.a.role.laser.armor > 0 && rb.a.role.board.armor === 0, `armor: laser damage cut ${rl.a.role.laser.armor.toFixed(2)}, boarding ${rb.a.role.board.armor.toFixed(2)}`);
+}
+{
+  // cloak: shots miss while cloaked; an enemy radar ends the cloak
+  const i = ships.findIndex((s) => s.cloak > 0 && s.radar > 0), j = ships.findIndex((s) => s.cloak === 0 && s.radar > 0 && s.weaponPower.laser > 0);
+  const noRadar = variant(j, " -radar", (r) => r[4] !== "Radar");
+  const missed = (r) => r.b.missed / Math.max(1, r.b.fired);
+  const a = missed(BM.duel(ships[i], ships[j], 400, 9)), b = missed(BM.duel(ships[i], noRadar, 400, 9));
+  ok(b > a, `cloak: ${ships[i].label}'s cloak makes ${pct(a)} of ${ships[j].label}'s shots miss, ${pct(b)} once it has no radar`);
+}
+{
+  // power, shields and armor matter: a ship against a weakened copy of itself
+  [["half the reactors", (s) => { let k = 0; return (r) => r[4] !== "Reactor" || k++ % 2 === 0; }, 0.65],
+   ["no shields", () => (r) => r[4] !== "Shield", 0.55],
+   ["no armor", () => (r) => r[4] !== "Armor" && r[4] !== "Wall", 0.5],
+   ["no engines", () => (r) => r[4] !== "Engine", 0.5]].forEach(([what, mk, min]) => {
+    let w = 0;
+    const n = 8;
+    for (let i = 0; i < n; i++) { const k = i * 12; w += BM.duel(ships[k], variant(k, " " + what, mk()), 300, 11).pA; }
+    ok(w / n > min, `against a copy of itself with ${what} a ship wins ${pct(w / n)} on average (8 ships)`);
+  });
 }
 
 // better-ranked ship win rate (for the README), 80 fights per pair

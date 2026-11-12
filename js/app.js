@@ -191,7 +191,7 @@ function hullPreviewSvg(rows) {
   const T = Math.max(4, Math.min(12, Math.floor(380 / rows[0].length)));
   const p = [`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${rows[0].length * T} ${rows.length * T}" width="${rows[0].length * T}" height="${rows.length * T}">`];
   rows.forEach((r, y) => [...r].forEach((c, x) => {
-    if (c !== ".") p.push(`<rect x="${x * T}" y="${y * T}" width="${T - 1}" height="${T - 1}" fill="${c === "r" ? "#24406b" : "#4a5a7a"}"/>`);
+    if (c !== ".") p.push(`<rect x="${x * T}" y="${y * T}" width="${T - 1}" height="${T - 1}" fill="${c === "r" ? "#3a6db5" : "#3d4c7a"}"/>`);
   }));
   p.push("</svg>");
   return p.join("");
@@ -663,7 +663,7 @@ function setIdleUi() {
 function showError(msg, retry) {
   const b = $("errorBox"); b.textContent = msg; b.hidden = false;
   if (retry) {
-    const rb = el("button", { type: "button", class: "small", text: "Retry", style: "margin-left:8px" });
+    const rb = el("button", { type: "button", class: "small", text: "Retry" });
     rb.onclick = () => { b.hidden = true; $("status").textContent = "Loading Python runtime..."; engineFailed = false; resetPool(); updateSteps(); };
     b.append(" ", rb);
     engineFailed = true;
@@ -983,26 +983,31 @@ function inkOn(hex) {
 }
 function layoutSvg(l) {
   const W = l.width, H = l.height, T = TILE;
-  const p = [`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W * T} ${H * T}" width="${W * T}" height="${H * T}" font-family="system-ui,sans-serif">`];
-  p.push(`<rect width="${W * T}" height="${H * T}" fill="#0c111b"/>`);
+  // pixel look: square tiles, crisp edges, rooms drawn as raised blocks (light top/left edge, dark bottom/right edge)
+  const p = [`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W * T} ${H * T}" width="${W * T}" height="${H * T}" font-family="'IBM Plex Sans',system-ui,sans-serif" shape-rendering="crispEdges">`];
+  p.push(`<rect width="${W * T}" height="${H * T}" fill="#060912"/>`);
   l.grid.forEach((row, y) => [...row].forEach((c, x) => {
-    if (c !== "#") p.push(`<rect x="${x * T}" y="${y * T}" width="${T}" height="${T}" fill="#2a3347" stroke="#1a2133" stroke-width="1"/>`);
+    if (c !== "#") p.push(`<rect x="${x * T}" y="${y * T}" width="${T}" height="${T}" fill="#2a3560" stroke="#10172b" stroke-width="1"/>`);
   }));
-  (l.resource_tiles || []).forEach(([x, y]) => p.push(`<rect x="${x * T}" y="${y * T}" width="${T}" height="${T}" fill="#24406b" stroke="#1a2133" stroke-width="1"><title>Resource space ${x}, ${y}</title></rect>`));
-  const rect = (r, fill, label, tip) => p.push(
-    `<g><title>${tip}</title><rect x="${r.x * T + 1}" y="${r.y * T + 1}" width="${r.w * T - 2}" height="${r.h * T - 2}" rx="3" fill="${fill}" stroke="#0c111b" stroke-width="1.5"/>` +
-    `<text x="${(r.x + r.w / 2) * T}" y="${(r.y + r.h / 2) * T + 5}" text-anchor="middle" fill="${inkOn(fill)}" font-size="13" font-weight="600">${label}</text></g>`);
+  (l.resource_tiles || []).forEach(([x, y]) => p.push(`<rect x="${x * T}" y="${y * T}" width="${T}" height="${T}" fill="#3a6db5" stroke="#10172b" stroke-width="1"><title>Resource space ${x}, ${y}</title></rect>`));
+  const rect = (r, fill, label, tip) => {
+    const x = r.x * T + 1, y = r.y * T + 1, w = r.w * T - 2, h = r.h * T - 2;
+    p.push(`<g><title>${tip}</title><rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${fill}"/>` +
+      `<rect x="${x}" y="${y}" width="${w}" height="3" fill="#fff" fill-opacity=".28"/><rect x="${x}" y="${y}" width="3" height="${h}" fill="#fff" fill-opacity=".16"/>` +
+      `<rect x="${x}" y="${y + h - 3}" width="${w}" height="3" fill="#000" fill-opacity=".35"/><rect x="${x + w - 3}" y="${y}" width="3" height="${h}" fill="#000" fill-opacity=".25"/>` +
+      `<text x="${(r.x + r.w / 2) * T}" y="${(r.y + r.h / 2) * T + 5}" text-anchor="middle" fill="${inkOn(fill)}" font-size="13" font-weight="600">${label}</text></g>`);
+  };
   l.rooms.forEach((r) => {
     const tip = `${r.name}` + (r.catLabel ? ` [${r.catLabel}]` : "") + ` (${r.w}x${r.h}) at ${r.x}, ${r.y}` + (r.combat ? ` | armor touching: ${r.armor}` : "");
     rect(r, roomColor(r), esc(roomShort(r)), esc(tip));
   });
   l.bonus.forEach((r) => rect(r, "#3f9b57", "x", esc(`${r.name} at ${r.x}, ${r.y}`)));
-  l.armor.forEach(([x, y]) => p.push(`<rect x="${x * T + 2}" y="${y * T + 2}" width="${T - 4}" height="${T - 4}" fill="#e6b93c"><title>Armor ${x}, ${y}</title></rect>`));
+  l.armor.forEach(([x, y]) => p.push(`<rect x="${x * T + 2}" y="${y * T + 2}" width="${T - 4}" height="${T - 4}" fill="#e6b93c" stroke="#8a6a14" stroke-width="2"><title>Armor ${x}, ${y}</title></rect>`));
   l.lifts.forEach(([x, y0, y1]) => p.push(`<rect x="${x * T + 3}" y="${y0 * T}" width="${T - 6}" height="${(y1 - y0 + 1) * T}" fill="#38c6d9"><title>Lift x=${x}, y ${y0}-${y1}</title></rect>`));
   l.vents.forEach(([x, y]) => p.push(`<rect x="${x * T + 4}" y="${y * T + 4}" width="${T - 8}" height="${T - 8}" fill="#f5f5f5"><title>Vent ${x}, ${y}</title></rect>`));
   if (l.combat_center) {
     const [cx, cy] = [l.combat_center[0] * T, l.combat_center[1] * T];
-    p.push(`<g stroke="#ffffff" stroke-width="2.5"><title>Middle of the combat rooms (anti-air target)</title>` +
+    p.push(`<g stroke="#ffffff" stroke-width="2.5" shape-rendering="geometricPrecision"><title>Middle of the combat rooms (anti-air target)</title>` +
       `<circle cx="${cx}" cy="${cy}" r="8" fill="#0c111b" fill-opacity=".55"/><line x1="${cx - 11}" y1="${cy}" x2="${cx + 11}" y2="${cy}"/><line x1="${cx}" y1="${cy - 11}" x2="${cx}" y2="${cy + 11}"/></g>`);
   }
   p.push("</svg>");
@@ -1053,7 +1058,7 @@ function renderLayout() {
   ROOM_CATEGORIES.forEach((c) => { if (seen.has(c.id)) items.push([c.color, `${c.label} (${seen.get(c.id)})`]); });
   if (l.combat_center) items.push(["transparent", "\u2316 combat middle (anti-air target)"]);
   items.push(["#e6b93c", "Armor"], ["#38c6d9", "Lift"], ["#f5f5f5", "Vent"], ["#3f9b57", "Bonus room"]);
-  if (l.resource_tiles && l.resource_tiles.length) items.push(["#24406b", "Resource space (r)"]);
+  if (l.resource_tiles && l.resource_tiles.length) items.push(["#3a6db5", "Resource space (r)"]);
   items.forEach(([c, t]) => { const s = el("span"); s.innerHTML = `<i style="background:${c}"></i>`; s.append(t); legend.append(s); });
 
   const s = l.stats;

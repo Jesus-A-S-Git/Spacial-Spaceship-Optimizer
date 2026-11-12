@@ -25,7 +25,7 @@ function inkFor(hex) {
   if (!m) return "#fff";
   const lin = [0, 2, 4].map((i) => { const c = parseInt(m[1].slice(i, i + 2), 16) / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; });
   const L = 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2];
-  return (L + 0.05) / 0.05 > 1.05 / (L + 0.05) ? "#0c111b" : "#fff";
+  return (L + 0.05) / 0.05 > 1.05 / (L + 0.05) ? "#000" : "#fff";   // pure black/white: always 4.5:1 or more
 }
 const swatch = (c) => el("i", { style: `background:${c}` });
 const optimizerLink = (id) => `index.html?ship=${encodeURIComponent(id)}`;
@@ -202,6 +202,8 @@ function benchmark(a) {
 }
 
 // ---------------------------------------------------------------- builds
+// build names like "Hangar/Boarding": allow a line break after the slash on narrow screens
+const slashBreak = (t) => String(t).replace(/\//g, "/\u200b");
 function buildsSection(a) {
   const b = a.builds;
   if (!b) return false;
@@ -211,7 +213,7 @@ function buildsSection(a) {
   b.summary.forEach((g) => {
     const track = el("div", { class: "track", title: `${g.build}: ${g.ships} of the top 100, best rank #${g.best_rank}, median rank #${fmt(g.median_rank, 0)}, average ${g.trophies} trophies` },
       el("div", { class: "fill", style: `width:${(g.ships / max) * 100}%` }));
-    box.append(el("div", { class: "lab" }, document.createTextNode(g.build)), track,
+    box.append(el("div", { class: "lab" }, document.createTextNode(slashBreak(g.build))), track,
       el("div", { class: "val", text: `${g.ships} · #${g.best_rank}` }));
   });
   // build x (offense mix, defenses) table, cells shaded where clearly above the top-100 median
@@ -388,7 +390,7 @@ function powerSection(a) {
     const p = v.power;
     const draws = Object.entries(p.draw).slice(0, 3).map(([c, f]) => `${catOf(c).label} ${pct(f)}`).join(", ");
     const diff = p.ratio[1] - med;
-    t.append(el("tr", {}, el("td", { text: n }), el("td", { class: "num", text: String(v.ships) }), el("td", { class: "num", text: fmt(p.make) }),
+    t.append(el("tr", {}, el("td", { text: slashBreak(n) }), el("td", { class: "num", text: String(v.ships) }), el("td", { class: "num", text: fmt(p.make) }),
       el("td", { class: "num", text: fmt(p.use) }),
       el("td", { class: "num" + (v !== r.all && Math.abs(diff) >= 0.02 ? (diff > 0 ? " pos" : " neg") : ""), text: pct(p.ratio[1]) }),
       el("td", { class: "num", text: v.ships > 1 ? `${pct(p.ratio[0])}-${pct(p.ratio[2])}` : "-" }), el("td", { class: "buildcell", text: draws })));
@@ -469,6 +471,9 @@ function gatesSection(a) {
 
 // ---------------------------------------------------------------- gallery
 function drawShip(l) {
+  // raised-block edges for a room (pixel look): light top/left, dark bottom/right
+  const bevel = (x, y, w, h) => `<rect x="${x}" y="${y}" width="${w}" height="2" fill="#fff" fill-opacity=".28"/><rect x="${x}" y="${y}" width="2" height="${h}" fill="#fff" fill-opacity=".15"/>` +
+    `<rect x="${x}" y="${y + h - 2}" width="${w}" height="2" fill="#000" fill-opacity=".35"/><rect x="${x + w - 2}" y="${y}" width="2" height="${h}" fill="#000" fill-opacity=".25"/>`;
   const ship = Hulls.byId(l.ship_id);
   const p = Top100.parse(l);
   const rows = ship ? ship.rows : null;
@@ -480,19 +485,19 @@ function drawShip(l) {
   if (rows) rows.forEach((r, y) => [...r].forEach((c, x) => { if (c !== ".") grow(x, y); }));
   p.rooms.forEach(([x, y, w, h]) => { grow(x, y); grow(x + w - 1, y + h - 1); });
   const T = 16, w = (x1 - x0) * T, h = (y1 - y0) * T;
-  const out = [`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" font-family="system-ui,sans-serif">`,
-    `<rect width="${w}" height="${h}" fill="#0c111b"/>`];
+  const out = [`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" font-family="'IBM Plex Sans',system-ui,sans-serif" shape-rendering="crispEdges">`,
+    `<rect width="${w}" height="${h}" fill="#060912"/>`];
   if (rows) rows.forEach((r, y) => [...r].forEach((c, x) => {
-    if (c !== ".") out.push(`<rect x="${(x - x0) * T}" y="${(y - y0) * T}" width="${T}" height="${T}" fill="#2a3347" stroke="#1a2133"/>`);
+    if (c !== ".") out.push(`<rect x="${(x - x0) * T}" y="${(y - y0) * T}" width="${T}" height="${T}" fill="#2a3560" stroke="#10172b"/>`);
   }));
   p.rooms.forEach(([x, y, rw, rh, cat, short, name, type]) => {
     const c = catOf(cat);
     const label = (short || "").slice(0, rw >= 3 ? 4 : 3);
     out.push(`<g><title>${esc(name)} [${esc(c.label)}] ${rw}x${rh} at ${x}, ${y}</title>` +
-      `<rect x="${(x - x0) * T + 1}" y="${(y - y0) * T + 1}" width="${rw * T - 2}" height="${rh * T - 2}" rx="2" fill="${c.color}" stroke="#0c111b"/>` +
+      `<rect x="${(x - x0) * T + 1}" y="${(y - y0) * T + 1}" width="${rw * T - 2}" height="${rh * T - 2}" fill="${c.color}" stroke="#060912"/>` + bevel((x - x0) * T + 1, (y - y0) * T + 1, rw * T - 2, rh * T - 2) +
       (rw > 1 ? `<text x="${(x - x0 + rw / 2) * T}" y="${(y - y0 + rh / 2) * T + 4}" text-anchor="middle" fill="${inkFor(c.color)}" font-size="10" font-weight="600">${esc(label)}</text>` : "") + "</g>");
   });
-  p.armor.forEach(([x, y]) => out.push(`<rect x="${(x - x0) * T + 2}" y="${(y - y0) * T + 2}" width="${T - 4}" height="${T - 4}" fill="#e6b93c"/>`));
+  p.armor.forEach(([x, y]) => out.push(`<rect x="${(x - x0) * T + 2}" y="${(y - y0) * T + 2}" width="${T - 4}" height="${T - 4}" fill="#e6b93c" stroke="#8a6a14"/>`));
   p.vents.forEach(([x, y]) => out.push(`<rect x="${(x - x0) * T + 3}" y="${(y - y0) * T + 3}" width="${T - 6}" height="${T - 6}" fill="#f5f5f5"><title>Service vent ${x}, ${y}</title></rect>`));
   p.lifts.forEach(([x, a, b]) => out.push(`<rect x="${(x - x0) * T + 3}" y="${(a - y0) * T}" width="${T - 6}" height="${(b - a + 1) * T}" fill="#38c6d9"><title>Lift x=${x}, y ${a}-${b}</title></rect>`));
   out.push("</svg>");

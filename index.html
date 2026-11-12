@@ -6,6 +6,11 @@
   <meta name="description" content="Find a strong room layout for your Pixel Starships hull in the browser, learned from the top 100 ladder ships.">
   <meta name="color-scheme" content="dark">
   <title>Ship Layout Optimizer</title>
+  <meta name="theme-color" content="#0a0d18">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono&family=IBM+Plex+Sans:wght@400;500;600&family=Pixelify+Sans:wght@500;600&family=Silkscreen&display=swap">
+  <link rel="stylesheet" href="css/theme.css">
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -58,7 +63,7 @@
         <div class="toolbar tight zoombar"><button type="button" id="zoomBtn" class="small" aria-pressed="false" title="Show the picture at full size (scroll sideways to see all of it)">Zoom in</button></div>
         <div id="layoutSvg"></div>
         <div id="legend" class="legend"></div>
-        <div class="toolbar">
+        <div class="toolbar dlbar">
           <button id="copyCoords" class="primary">Copy coordinates</button>
           <button id="dlTxt">Download coordinates (TXT)</button>
           <button id="dlSvg">Download picture (SVG)</button>
@@ -133,7 +138,7 @@
           <div id="planBuilds" class="chips buildchips"></div>
           <label class="inline" title="Starbux, event and reward rooms, premium bedrooms (Aquarium, Cat House ...) and starter rooms (Captain's Quarters, Coal Reactor). Bedrooms and the Fleet Council are always included."><input type="checkbox" id="planSpecial"> Include event and premium (starbux) rooms</label>
           <div class="toolbar tight">
-            <button id="planGo" class="primary small">Recommend rooms</button>
+            <button id="planGo" class="small">Recommend rooms</button>
             <span id="planStatus" class="muted"></span>
           </div>
           <div id="planOut" hidden>
@@ -190,8 +195,9 @@
 
       <section class="tabpane" data-tab="advanced" id="secAdvanced" hidden>
         <h2>Advanced</h2>
-        <p class="muted">The defaults work well; change these only to steer the search. <button id="resetBtn" class="small">Reset everything to defaults</button></p>
+        <p class="muted">The defaults work well; change these only to steer the search.</p>
         <div class="toolbar tight">
+          <button id="resetBtn" class="small">Reset everything to defaults</button>
           <button type="button" id="settingsSave" class="small" title="Hull, room list and every setting in one file, e.g. to keep several ships or move to another browser">Save all settings to a file</button>
           <button type="button" id="settingsLoadBtn" class="small">Load settings file</button>
           <input type="file" id="settingsLoad" accept=".json,application/json" hidden>
