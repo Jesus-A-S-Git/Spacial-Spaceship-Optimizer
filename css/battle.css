@@ -57,3 +57,11 @@ details.how ul { padding-left: 20px; }
   table.cmp td { white-space: normal; }
 }
 .topnav { flex-wrap: wrap; }
+
+/* weapon matchups */
+table.mu td.verdict { font-size: 12px; white-space: nowrap; }
+table.mu td.vhard { color: #ff8a80; font-weight: 600; }
+table.mu td.vcountered { color: #ffb74d; }
+table.mu td.vpartly { color: var(--muted); }
+table.mu td.vgets { color: #81c784; font-weight: 600; }
+table.mu .tag { margin-right: 2px; }
