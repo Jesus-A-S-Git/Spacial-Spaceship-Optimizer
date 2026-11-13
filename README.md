@@ -273,27 +273,25 @@ Interceptor Lv9 in hangars, Decoy Drone in decoy bays: launchers and hangars fir
 
 **Where the weapon data comes from.** `tools/build_room_list.py` now also keeps each room's combat fields (`reload`,
 `cooldown`, `defBonus`, `restore`, `shot`, `craft`) and adds an `ammo` table from `RoomService/ListMissileDesigns` and
-`ListCraftDesigns`, so the regular refresh from the live API fills them for every room. The live API, PixyShip and the wiki
-could not be reached from where this was built, so the combat fields in the current `data/rooms.json` were merged
-(`--merge-into`, which keeps every existing room field) from official API responses recorded in 2024 (RoomDesignVersion
-932) in the test cassettes of github.com/PSS-Tools-Development/pssapi.py (`tests/cassettes/room_service/*.yaml`).
-They cover 478 of the 798 room designs; most top-100 rooms are level-13/14 designs added later, so they use the highest
-older level of the same room (so later balance changes are missing), and rooms with no combat stats at all (Turbo Laser,
-Missile Pod, Torpedo Launcher, Gamma Beam Emitter, Shield Capacitor / Overcharger, Mass Teleporter, Tractor Beam Emitter,
-Warp / Corvette / Tactical Hangar, ...) use a typical real room of the same type. Their power, capacity and size are
-always current data. The breakdown counts those rooms
-("Rooms with estimated combat stats"). Running `python3 tools/build_room_list.py` with internet replaces all of this with
-current data.
+`ListCraftDesigns`, so the regular refresh from the live API fills them for every room. The current `data/rooms.json` was
+built from the live official API (`api.pixelstarships.com`, `combatSource: "official"`): 695 of the 798 room designs have
+combat stats, including every weapon, hangar and anti-craft design, and 1191 of the 1402 weapon / anti-craft rooms in the
+top 100 have their own level's stats. The rest (rooms whose level has no stats, or launchers and hangars that fire
+whatever the player loads) use the highest older level of the same room, a typical real room of the same type, or the
+default ammo; the breakdown counts them ("Rooms with estimated combat stats"). Anti-craft damage is the API's
+`CraftDamage` (`cd`); older recorded data had it in `SystemDamage`, and the model reads either.
+`--merge-into` can still add combat fields from saved API responses (for example the 2024 recordings in
+github.com/PSS-Tools-Development/pssapi.py test cassettes) when the live API cannot be reached.
 
 Checks: `node tools/test_battle.js` (self-matches 48-52% at 1500 fights; each counter works in the right direction:
 adding engines, Interdictor Gates, traps, anti-craft or shield generators stops more of the matching weapon and does not
-lower the defender's win chance; engines dodge 90% of an 11-power missile load but 75% of a 41-power one; plus: the stats
+lower the defender's win chance; engines dodge 91% of an 11-power missile load but 62% of a 41-power one; plus: the stats
 come from the game data, missiles are never soaked by shields, armor cuts lasers but not boarders, cloak makes shots miss
-and an enemy radar ends it; against a copy of itself with half the reactors a ship wins ~96%, without shields ~74%,
-without engines ~71%, without armor ~55%).
+and an enemy radar ends it; against a copy of itself with half the reactors a ship wins ~90%, without shields ~79%,
+without engines ~63%, without armor ~53%).
 
-Rank: the better-ranked ship wins **48.4%** of the 4950 top-100 pairs (`node tools/test_battle.js --rank`, 80 fights per
-pair); the earlier version with made-up weapon numbers gave 50.2%. Changing the main assumptions one at a time (room HP x3,
+Rank: the better-ranked ship wins **48.8%** of the 4950 top-100 pairs (`node tools/test_battle.js --rank`, 80 fights per
+pair) on the live data; 48.4% on the 2024 recordings, 50.2% with the earlier made-up weapon numbers. Changing the main assumptions one at a time (room HP x3,
 boarding damage x0.5 / x2, hull HP x2, 6-minute fights, dodge cost x0.5 / x2, no luck, armor x3, other craft ammo) kept it
 at 47-49%, so nothing was tuned to it: the top 100 fly nearly the same rooms, and what separates them (crew, AI,
 research, equipment) is what the model leaves out.

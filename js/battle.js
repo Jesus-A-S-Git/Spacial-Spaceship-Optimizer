@@ -71,6 +71,8 @@ const BattleModel = (() => {
 
   const base = (n) => String(n || "").replace(/\s+Lv\s*\d+$/i, "").trim().toLowerCase().replace(/\s+/g, " ");
   const vol = (s) => (s && s.v) || 1;
+  // damage an anti-craft shot does to a craft: CraftDamage in the live game data, SystemDamage in older recorded data
+  const craftDmg = (s) => (s ? (s.cd != null ? s.cd : s.sy || 0) : 0);
   const hitDmg = (s) => (s ? (s.sy || 0) + (s.ap || 0) + (s.hu || 0) : 0);     // room + hull damage per projectile
   function setup(roomsJson, analysisJson) {
     catalogue = new Map();
@@ -278,7 +280,7 @@ const BattleModel = (() => {
     s.antiMissile = sum("antimissile", (r) => r.cap);                                 // evasion pool (dodge modifiers)
     s.evasionRegen = sum("antimissile", (r) => r.cap * r.evRegen);                    // evasion points per second
     s.antiAirPower = sum("antiair", (r) => r.power);
-    s.antiAir = sum("antiair", (r) => (r.shot ? (r.shot.sy || 0) * vol(r.shot) / cycle(r) : 0));   // craft HP shot per second
+    s.antiAir = sum("antiair", (r) => (r.shot ? craftDmg(r.shot) * vol(r.shot) / cycle(r) : 0));   // craft HP shot per second
     s.antiTele = count("antitele");
     s.traps = count("trap");
     s.trapDmg = sum("trap", (r) => r.cap);
@@ -434,7 +436,7 @@ const BattleModel = (() => {
         if (!live.length) break;
         const decoys = live.filter((w) => !hitDmg(w.r.craft.shot));
         const w = (decoys.length ? decoys : live)[Math.floor(R() * (decoys.length || live.length))];
-        w.craftHp -= x.r.shot.sy || 0;
+        w.craftHp -= craftDmg(x.r.shot);
         if (w.craftHp <= 0) { en.stats.intercepted++; w.downed = true; w.next = t + w.r.reload / powerFactor(en) + w.r.cooldown; }
       }
     }
