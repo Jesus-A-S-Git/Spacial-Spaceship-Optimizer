@@ -218,6 +218,38 @@ resource room never straddles `r` and ordinary tiles. When the hull has `r` tile
 ordinary tiles costs `W_RES_OFF` (default 50), and the search, the starting layouts and the deck / top-100
 starts put resource rooms on `r` tiles first.
 
+## Bonus rooms (filler)
+
+After the search, *Fill leftover space with bonus rooms* (Advanced, on by default; `PLACE_BONUS_ROOMS`) fills
+leftover space with filler bonus rooms, in this order:
+
+1. **3x2** bonus rooms (`BONUS_SIZE`) wherever they fit without touching armor or a lift, then 3x2s that break up
+   empty rows longer than *Max empty run*.
+2. **2x2** bonus rooms (`BONUS_SIZE_2X2`, *Also place 2x2 bonus rooms*, `PLACE_BONUS_2X2`, on by default), the same
+   two passes, only in the space that is left where no 3x2 fits.
+
+Fillers never go on the corridor tiles crew need to reach every combat room, never on `r` tiles, and never on armor
+tiles (armor is placed first). 2x2s also stay off the empty tiles on crew's shortest routes from the first combat
+room, so a small filler never plugs the one gap crew walk through. On the page the 2x2s are a lighter green than the
+3x2s, and the stats, the coordinates table and the TXT / copy output give the count of each ("Bonus rooms: 12 3x2,
+3 2x2").
+
+Scoring: filler tiles are used space, so they are not counted in *Unused open tiles* (`W_EMPTY` each). On top of that,
+each filler room earns `W_BONUS_3X2` (default 10) or `W_BONUS_2X2` (default 5), shown under *Scoring weights > Space
+and zoning*. A 2x2 earns less than a 3x2 per room and per tile, and the per-room reward only counts when every combat
+room is reachable.
+
+The 2x2s and the per-room reward are **added to the finished layouts only** (`finalize(state, final=True)`: the page's
+results and the command line's printed layout). The search itself scores exactly as before (3x2 fillers, no per-room
+reward), so it finds the same layouts and cannot trade armor, reach or travel for filler credit. On the page, the
+**Score** shown above a layout and its stats include the 2x2s and the bonus reward. Layouts are still ranked by the
+search's own score (`score` in the layout JSON; the shown one is `final_score`).
+
+`tools/benchmark_top.py` runs with fillers off, like the real top ships it is compared with. With
+`--set PLACE_BONUS_ROOMS=1` the search runs with the 3x2 fillers. Its per-ship numbers are the search's scores and are
+judged without fillers, so the 2x2s never show there. To see them, finalize the saved best layouts with
+`final=True`. The driver also accepts `PLACE_BONUS_ROOMS` and `PLACE_BONUS_2X2` as settings.
+
 ## Ship vs ship (mock win rate)
 
 `battle.html` (`js/battle.js`, `css/battle.css`) lets you pick two ships (any top-100 ladder ship, or **My build**: the room

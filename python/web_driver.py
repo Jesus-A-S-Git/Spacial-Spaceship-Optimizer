@@ -24,7 +24,11 @@ INT_KEYS = {"ARMOR_COUNT", "MAX_EMPTY_RUN", "LIFT_COST", "VENT_COUNT", "VENT_LIN
 FLOAT_KEYS = {"PRIORITY_WEIGHT", "W_ARMOR", "W_UNARMORED", "W_PRIORITY_UNARMORED", "W_FLOAT",
               "W_TRAVEL", "W_CORNER", "W_DISC", "CORNER_UNREACHABLE", "W_LIFT", "W_LTOUCH",
               "W_LIFT_BALANCE", "W_LIFT_COUNT", "W_GAP", "W_EMPTY", "W_RUN", "W_ISO", "W_SPREAD",
-              "SPREAD_CAP", "W_VENT", "W_ARMOR_UNDER", "PRIORITY_UNDER_MULT", "W_ARMOR_OVER", "W_SIDE", "W_CENTER", "W_PATTERN", "W_SHELL", "W_NC_CLUSTER", "W_LIFT_DENSITY", "W_BOOST", "W_GATE", "W_RES_OFF"}
+              "SPREAD_CAP", "W_VENT", "W_ARMOR_UNDER", "PRIORITY_UNDER_MULT", "W_ARMOR_OVER", "W_SIDE", "W_CENTER", "W_PATTERN", "W_SHELL", "W_NC_CLUSTER", "W_LIFT_DENSITY", "W_BOOST", "W_GATE", "W_RES_OFF",
+              "W_BONUS_3X2", "W_BONUS_2X2"}
+# on/off switches that may also come in "settings" (e.g. benchmark_top.py --set PLACE_BONUS_ROOMS=1); they win
+# over the page's place_bonus_rooms / place_bonus_2x2 flags
+BOOL_KEYS = {"PLACE_BONUS_ROOMS": "place_bonus_rooms", "PLACE_BONUS_2X2": "place_bonus_2x2"}
 # What each booster boosts (measured on the top-100 ships); unknown boosters boost any combat room.
 COMBAT_TAGS = ["reactor", "shield", "priority", "laser", "antiair", "missile", "hangar", "antimissile", "antitele",
                "boarding", "crewsupport", "cloak", "shieldsupport", "command", "utility", "combat"]
@@ -78,7 +82,9 @@ def build_injection(cfg):
     cr = cfg.get("combat_range")
     if cr:
         lines.append(f"COMBAT_ARMOR_RANGE = ({int(cr[0])}, {int(cr[1])})")
-    lines.append(f"PLACE_BONUS_ROOMS = {bool(cfg.get('place_bonus_rooms', True))}")
+    sets = cfg.get("settings", {})
+    for key, flag in BOOL_KEYS.items():
+        lines.append(f"{key} = {bool(sets.get(key, cfg.get(flag, True)))}")
     lines.append(f"WALK_NONCOMBAT = {bool(cfg.get('walk_noncombat', False))}")
     lines.append(f"VENT_GAME_LINKS = {bool(cfg.get('vent_game_links', False))}")
     lines.append(f"CONNECT_ALL = {bool(cfg.get('connect_all', False))}")
@@ -226,6 +232,14 @@ def build_module(cfg, source_path):
 
 def layout_json(m, res):
     score, g, info = res
+    final_score = score
+    # The search scored this layout without the output-only extras (2x2 bonus rooms, per-room bonus reward).
+    # Redo it with them for what is shown; `score` stays the search's score (ranking, benchmarks), and
+    # `final_score` is the shown layout's score. Older engines have no `final` argument.
+    if "final" in m.finalize.__code__.co_varnames:
+        fin = m.finalize(info["state"], final=True)
+        if fin:
+            final_score, g, info = fin
     st = info["state"]
     touch = info["touch"]
     rooms = []
@@ -246,7 +260,8 @@ def layout_json(m, res):
         rm["resource"] = False
     for r in getattr(m, "RES_IDX", ()):
         rooms[r]["resource"] = True
-    bonus = [dict(name=n, sym=s, w=w, h=h, x=x, y=y) for n, s, w, h, x, y, c in info["out"][m.NR:]]
+    # filler bonus rooms (3x2 and, where a 3x2 no longer fits, 2x2), named by size
+    bonus = [dict(name=f"Bonus Room {w}x{h}", sym=s, w=w, h=h, x=x, y=y) for n, s, w, h, x, y, c in info["out"][m.NR:]]
     legend = dict(m.SYMBOLS)
     legend.update(m.NONCOMBAT_SYMBOLS)
     stats = dict(
@@ -264,11 +279,12 @@ def layout_json(m, res):
         sweet_spot_shortfall=info["range_under"], sweet_spot_excess=info["range_over"],
         center_rooms=len(getattr(m, "CENTER_IDX", ())), center_distance=info.get("center_dist", 0.0),
         resource_rooms_off_resource=info.get("res_off", 0),
+        bonus_3x2=sum(1 for b in bonus if (b["w"], b["h"]) == (3, 2)), bonus_2x2=sum(1 for b in bonus if (b["w"], b["h"]) == (2, 2)),
     )
     res_tiles = sorted([list(t) for t in getattr(m, "RES_TILES", ())], key=lambda t: (t[1], t[0]))
     cp = info.get("center_point") if getattr(m, "CENTER_IDX", None) else None
     state = dict(pos=[list(p) for p in st["pos"]], lifts=[list(l) for l in st["lifts"]], vents=[list(v) for v in st["vents"]])
-    return dict(score=score, width=m.W, height=m.H, state=state, combat_center=list(cp) if cp else None, resource_tiles=res_tiles, grid=["".join(row) for row in g],
+    return dict(score=score, final_score=final_score, width=m.W, height=m.H, state=state, combat_center=list(cp) if cp else None, resource_tiles=res_tiles, grid=["".join(row) for row in g],
                 rooms=rooms, bonus=bonus, lifts=[list(l) for l in st["lifts"]],
                 vents=[list(v) for v in st["vents"]], armor=sorted([list(t) for t in info["armor"]], key=lambda t: (t[1], t[0])),
                 legend=legend, stats=stats)

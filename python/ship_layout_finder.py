@@ -179,6 +179,12 @@ W_EMPTY = 6                  # Penalty per unused interior hull tile outside cor
 W_RUN = 6.0                    # Penalty for horizontal empty runs longer than MAX_EMPTY_RUN
 W_ISO = 25.0                   # Penalty for undesirable mixing of non-combat and combat zones
 MAX_EMPTY_RUN = 3              # Longest horizontal empty run before W_RUN applies
+# Bonus-room reward, per filler room on top of the W_EMPTY it already saves (its tiles are used, so they are
+# not "unused open tiles"). The 2x2 earns less per room AND per tile than the 3x2, and only counts once every
+# combat room is reachable. Output only: the 2x2s and these rewards are added to the finished layouts
+# (finalize(..., final=True)), never to the scores the search compares.
+W_BONUS_3X2 = 10.0             # Reward per 3x2 bonus room
+W_BONUS_2X2 = 5.0              # Reward per 2x2 bonus room (keep below W_BONUS_3X2)
 
 # 5) Priority-room spacing and vents
 W_SPREAD = 1.5                 # Reward for spacing priority systems apart (0 disables)
@@ -323,6 +329,8 @@ RESOURCE_ROOMS = [
 RESOURCE_ANYWHERE = True
 W_RES_OFF = 50.0        # penalty per resource room on ordinary tiles while the hull has resource space ('r')
 BONUS_SIZE = (3, 2)     # filler rooms placed wherever they fit after the search
+BONUS_SIZE_2X2 = (2, 2) # second, smaller filler: only where a BONUS_SIZE room no longer fits
+PLACE_BONUS_2X2 = True  # also place 2x2 bonus rooms (only while PLACE_BONUS_ROOMS is on)
 # --------------------------------------------------------------- END CONFIG -
 
 # ------------------------------------------------------- top-50 priors ----
@@ -1934,7 +1942,10 @@ def _base_grid():
     return _BASE_GRID
 
 
-def finalize(state):
+def finalize(state, final=False):
+    """Finished layout and its score. final=True is only for OUTPUT (the driver's results, the CLI report): it
+    adds the 2x2 bonus rooms and the per-room bonus reward. The search always scores with final=False, so it
+    runs exactly as without those extras."""
     occ = occupancy(state)
     if occ is None:
         return None
@@ -2032,17 +2043,39 @@ def finalize(state):
             for xx in range(x, x + w):
                 g[yy][xx] = sym
 
-    def free_of_corridor(k, w, h):
-        return not any((xx, yy) in reserved for yy in range(k[4], k[4] + h) for xx in range(k[3], k[3] + w))
+    def free_of_corridor(k, w, h, keep=reserved):
+        return not any((xx, yy) in keep for yy in range(k[4], k[4] + h) for xx in range(k[3], k[3] + w))
 
-    # Filler "bonus" rooms soak up leftover space (never on corridor tiles the walkers need)
-    kw, kh = BONUS_SIZE
-    if PLACE_BONUS_ROOMS:
+    def walk_tree_tiles():
+        """Empty tiles on the shortest-path tree from room 0 when empty tiles ARE walkable (as in the final
+        walking metrics below). `reserved` only knows paths over floors and lifts, so without this a small
+        filler could plug the one gap crew walk through and cut rooms off."""
+        walk = set(lifts) | floor_tiles(pos)
+        walk.update(t for t in ALL_TILES if g[t[1]][t[0]] == ".")
+        adj_, reps_, _ = make_graph(pos, lifts, vents, tiles, walk)
+        nodes_, idx_, nbr_ = index_graph(adj_)
+        par_ = {}
+        s_ = idx_.get(reps_[0])
+        if s_ is not None:
+            tg_ = {idx_[t] for t in reps_[1:] if t in idx_}
+            _, pl_ = dijkstra_idx(s_, nbr_, tg_)
+            for k in tg_:
+                while pl_[k] >= 0 and nodes_[k] not in par_:
+                    par_[nodes_[k]] = nodes_[pl_[k]]
+                    k = pl_[k]
+        return reserved | corridor_tiles(par_, reps_, tiles, lifts, vents)
+
+    def fill_bonus(kw, kh, keep=reserved):
+        """Drop kw x kh filler rooms wherever they fit (never touching armor/lifts), then break up empty
+        runs longer than MAX_EMPTY_RUN with them. Never on corridor tiles the walkers need; never on 'r'
+        tiles (those are '~' in g, not '.'), never on `keep`. Returns how many were placed."""
+        name, placed = f"Bonus Room {kw}x{kh}", 0
         while True:
-            c = [k for k in cands(kw, kh, True) if free_of_corridor(k, kw, kh)]
+            c = [k for k in cands(kw, kh, True) if free_of_corridor(k, kw, kh, keep)]
             if not c:
                 break
-            drop("Bonus Room", "x", kw, kh, c[0][3], c[0][4])
+            drop(name, "x", kw, kh, c[0][3], c[0][4])
+            placed += 1
         for _ in range(60):
             fixed = False
             for y in range(H):
@@ -2055,8 +2088,9 @@ def finalize(state):
                             for yy in range(y - kh + 1, y + 1):
                                 for xx in range(x - run, x - kw + 1):
                                     if (rect_ok(xx, yy, kw, kh) and all(g[a][b] == "." for a in range(yy, yy + kh) for b in range(xx, xx + kw))
-                                            and not any((b, a) in reserved for a in range(yy, yy + kh) for b in range(xx, xx + kw))):
-                                        drop("Bonus Room", "x", kw, kh, xx, yy)
+                                            and not any((b, a) in keep for a in range(yy, yy + kh) for b in range(xx, xx + kw))):
+                                        drop(name, "x", kw, kh, xx, yy)
+                                        placed += 1
                                         fixed = True
                                         break
                                 if fixed:
@@ -2068,6 +2102,15 @@ def finalize(state):
                     break
             if not fixed:
                 break
+        return placed
+
+    # Filler "bonus" rooms soak up leftover space: the 3x2 first (preferred), then the 2x2 only in what is
+    # left where no 3x2 fits (including the empty runs a 3x2 could not break up).
+    bonus_big = bonus_small = 0
+    if PLACE_BONUS_ROOMS:
+        bonus_big = fill_bonus(*BONUS_SIZE)
+        if final and PLACE_BONUS_2X2 and BONUS_SIZE_2X2 != BONUS_SIZE:
+            bonus_small = fill_bonus(*BONUS_SIZE_2X2, keep=walk_tree_tiles() if NC else reserved)
 
     long_extra = 0
     dots = []                                  # empty tiles (walkable below)
@@ -2208,6 +2251,12 @@ def finalize(state):
              + W_PATTERN * pattern
              + W_BOOST * boosted
              + W_GATE * gate
+             # Bonus rooms (final=True only, i.e. the layouts shown / printed, never the search): a reward per
+             # filler room, ON TOP of the W_EMPTY their tiles no longer cost (filler tiles are not counted in
+             # empty_unused, so the tiles are paid once and the room once - no double count). Per room and per
+             # tile a 2x2 earns less than a 3x2. The search never sees it, so it cannot trade armor, reach or
+             # travel for filler credit; it only counts when every combat room is reachable.
+             + (W_BONUS_3X2 * bonus_big + W_BONUS_2X2 * bonus_small if final and unreach == 0 else 0.0)
              # top-50 style points only count once every combat room is reachable, so they never pull
              # the search toward a layout with a cut-off room
              + (W_SHELL * shell - W_NC_CLUSTER * nc_alone - W_LIFT_DENSITY * lift_density_pen if unreach == 0 else 0.0))
@@ -2221,7 +2270,7 @@ def finalize(state):
                 shell=shell, nc_alone=nc_alone, lift_density_pen=lift_density_pen,
                 edge_tiles=dict(edge_tiles), ring_tiles=dict(ring_tiles),
                 center_dist=center_dist, center_point=combat_center(pos), pattern=pattern,
-                boosted=boosted, gate=gate, res_off=res_off)
+                boosted=boosted, gate=gate, res_off=res_off, bonus_3x2=bonus_big, bonus_2x2=bonus_small)
     return score, g, info
 
 
@@ -3097,6 +3146,7 @@ def run_restart(args):
 
 
 def report(res, color=True):
+    res = finalize(res[2]["state"], final=True) or res     # the printed layout gets the 2x2s and bonus reward
     score, g, info = res
 
     # ANSI background colors make room types easy to distinguish in a terminal.
