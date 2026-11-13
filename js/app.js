@@ -33,6 +33,7 @@ const DEFAULTS = {
   ],
   resource_anywhere: true,
   place_bonus_rooms: true,
+  place_bonus_2x2: true,    // also 2x2 bonus rooms where a 3x2 no longer fits
   walk_noncombat: true,     // crew walk through every room (as in the game), not only combat rooms
   connect_all: true,        // after each search, add vents/lifts until every combat room is reachable
   use_top: true,            // start searches from top-100 layouts on the same hull
@@ -50,7 +51,7 @@ const DEFAULTS = {
     W_ARMOR_UNDER: 25, PRIORITY_UNDER_MULT: 2, W_ARMOR_OVER: 2,
     W_TRAVEL: 0.75, W_CORNER: 0.4, W_DISC: 20, CORNER_UNREACHABLE: 60,
     W_LIFT: 35, W_LTOUCH: 25, W_LIFT_BALANCE: 50, W_LIFT_COUNT: 18,
-    W_GAP: 2.5, W_EMPTY: 6, W_RUN: 6, W_ISO: 25,
+    W_GAP: 2.5, W_EMPTY: 6, W_RUN: 6, W_ISO: 25, W_BONUS_3X2: 10, W_BONUS_2X2: 5,
     W_SPREAD: 1.5, SPREAD_CAP: 24, W_VENT: 15, W_CENTER: 3, W_BOOST: 20, W_PATTERN: 3, W_SHELL: 3, W_NC_CLUSTER: 15, W_LIFT_DENSITY: 20, W_GATE: 10,
   },
   search: { iters: 1200, polish: 300, restarts: 0, time_limit: 300, seed: 1, stagnation: 0, population: 24, cores: 0 },
@@ -84,7 +85,8 @@ const WEIGHT_GROUPS = [
     ["W_LIFT_BALANCE", "Unbalanced lift traffic"], ["W_LIFT_COUNT", "Cost per lift"]]],
   ["Space and zoning", [
     ["W_GAP", "Corridor tile"], ["W_EMPTY", "Unused interior tile"], ["W_RUN", "Long empty run"],
-    ["W_ISO", "Non-combat room touching armor/lift"]]],
+    ["W_ISO", "Non-combat room touching armor/lift"],
+    ["W_BONUS_3X2", "3x2 bonus room (reward per room)"], ["W_BONUS_2X2", "2x2 bonus room (reward per room, keep below 3x2)"]]],
   ["Priority spacing and vents", [
     ["W_SPREAD", "Priority room spacing reward"], ["SPREAD_CAP", "Spacing reward cap"], ["W_VENT", "Unlinked vent"]]],
   ["Anti-air and boosters", [
@@ -439,7 +441,10 @@ function buildRooms() {
   });
   updateRoomSummary();
   $("placeBonus").checked = cfgState.place_bonus_rooms;
-  $("placeBonus").onchange = (e) => { cfgState.place_bonus_rooms = e.target.checked; saveSettings(); };
+  $("placeBonus").onchange = (e) => { cfgState.place_bonus_rooms = e.target.checked; $("placeBonus2").disabled = !e.target.checked; saveSettings(); };
+  $("placeBonus2").checked = cfgState.place_bonus_2x2;
+  $("placeBonus2").disabled = !cfgState.place_bonus_rooms;
+  $("placeBonus2").onchange = (e) => { cfgState.place_bonus_2x2 = e.target.checked; saveSettings(); };
   $("resAnywhere").checked = cfgState.resource_anywhere;
   $("resAnywhere").onchange = (e) => { cfgState.resource_anywhere = e.target.checked; saveSettings(); };
 }
@@ -835,7 +840,7 @@ function buildConfig() {
   const rows = cfgState.hull.split("\n").map((r) => r.trim()).filter(Boolean);
   return {
     hull: rows, settings: cfgState.settings, priority_range: cfgState.priority_range,
-    combat_range: cfgState.combat_range, place_bonus_rooms: cfgState.place_bonus_rooms,
+    combat_range: cfgState.combat_range, place_bonus_rooms: cfgState.place_bonus_rooms, place_bonus_2x2: cfgState.place_bonus_2x2,
     rooms: cfgState.rooms.map((r) => { const c = catOf(r.cat); return { name: r.name || c.label, short: r.short || "", cat: c.id, catLabel: c.label, kind: c.kind, w: r.w, h: r.h, count: r.count, armor: c.kind === "priority" || c.kind === "combat" ? (r.armor || "") : "" }; }),
     resource_anywhere: cfgState.resource_anywhere, search: cfgState.search,
     walk_noncombat: cfgState.walk_noncombat, vent_game_links: cfgState.walk_noncombat, connect_all: cfgState.connect_all,
@@ -981,6 +986,10 @@ function inkOn(hex) {
   const L = 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2];
   return (L + 0.05) / 0.05 > 1.05 / (L + 0.05) ? "#0c111b" : "#fff";
 }
+// filler bonus rooms: 3x2 green, 2x2 a lighter green so the two can be told apart
+const BONUS_3X2_COLOR = "#3f9b57", BONUS_2X2_COLOR = "#7cc576";
+const isBonus2x2 = (r) => r.w === 2 && r.h === 2;
+const bonusColor = (r) => (isBonus2x2(r) ? BONUS_2X2_COLOR : BONUS_3X2_COLOR);
 function layoutSvg(l) {
   const W = l.width, H = l.height, T = TILE;
   // pixel look: square tiles, crisp edges, rooms drawn as raised blocks (light top/left edge, dark bottom/right edge)
@@ -1001,7 +1010,7 @@ function layoutSvg(l) {
     const tip = `${r.name}` + (r.catLabel ? ` [${r.catLabel}]` : "") + ` (${r.w}x${r.h}) at ${r.x}, ${r.y}` + (r.combat ? ` | armor touching: ${r.armor}` : "");
     rect(r, roomColor(r), esc(roomShort(r)), esc(tip));
   });
-  l.bonus.forEach((r) => rect(r, "#3f9b57", "x", esc(`${r.name} at ${r.x}, ${r.y}`)));
+  l.bonus.forEach((r) => rect(r, bonusColor(r), "x", esc(`${r.name} at ${r.x}, ${r.y}`)));
   l.armor.forEach(([x, y]) => p.push(`<rect x="${x * T + 2}" y="${y * T + 2}" width="${T - 4}" height="${T - 4}" fill="#e6b93c" stroke="#8a6a14" stroke-width="2"><title>Armor ${x}, ${y}</title></rect>`));
   l.lifts.forEach(([x, y0, y1]) => p.push(`<rect x="${x * T + 3}" y="${y0 * T}" width="${T - 6}" height="${(y1 - y0 + 1) * T}" fill="#38c6d9"><title>Lift x=${x}, y ${y0}-${y1}</title></rect>`));
   l.vents.forEach(([x, y]) => p.push(`<rect x="${x * T + 4}" y="${y * T + 4}" width="${T - 8}" height="${T - 8}" fill="#f5f5f5"><title>Vent ${x}, ${y}</title></rect>`));
@@ -1049,7 +1058,9 @@ function renderLayout() {
   if (!l) return;
   $("emptyMsg").hidden = true; $("layoutWrap").hidden = false;
   $("layoutSvg").innerHTML = layoutSvg(l);
-  $("scoreVal").textContent = l.score.toFixed(1);
+  // the shown layout's score includes the 2x2 bonus rooms and the bonus-room reward (added after the search);
+  // layouts are still ranked by the search's own score (l.score)
+  $("scoreVal").textContent = (l.final_score ?? l.score).toFixed(1);
 
   const legend = $("legend"); legend.innerHTML = "";
   const items = [];
@@ -1057,7 +1068,8 @@ function renderLayout() {
   l.rooms.forEach((r) => { const key = r.cat || (r.priority ? "reactor" : r.combat ? "combat" : "noncombat"); seen.set(key, (seen.get(key) || 0) + 1); });
   ROOM_CATEGORIES.forEach((c) => { if (seen.has(c.id)) items.push([c.color, `${c.label} (${seen.get(c.id)})`]); });
   if (l.combat_center) items.push(["transparent", "\u2316 combat middle (anti-air target)"]);
-  items.push(["#e6b93c", "Armor"], ["#38c6d9", "Lift"], ["#f5f5f5", "Vent"], ["#3f9b57", "Bonus room"]);
+  items.push(["#e6b93c", "Armor"], ["#38c6d9", "Lift"], ["#f5f5f5", "Vent"], [BONUS_3X2_COLOR, "Bonus room 3x2"]);
+  if (l.bonus.some(isBonus2x2)) items.push([BONUS_2X2_COLOR, "Bonus room 2x2"]);
   if (l.resource_tiles && l.resource_tiles.length) items.push(["#3a6db5", "Resource space (r)"]);
   items.forEach(([c, t]) => { const s = el("span"); s.innerHTML = `<i style="background:${c}"></i>`; s.append(t); legend.append(s); });
 
@@ -1074,6 +1086,7 @@ function renderLayout() {
     ["Sweet-spot shortfall / excess", `${s.sweet_spot_shortfall.toFixed(0)} / ${s.sweet_spot_excess}`],
     ["Unused open tiles", s.unused_open_tiles], ["Priority spread", s.priority_spread.toFixed(1)],
   ];
+  if (l.bonus.length) defs.push(["Bonus rooms", `${s.bonus_3x2 ?? l.bonus.filter((b) => !isBonus2x2(b)).length} 3x2, ${s.bonus_2x2 ?? l.bonus.filter(isBonus2x2).length} 2x2`]);
   const pw = layoutPower(l);
   if (pw) defs.unshift(["Power used / made" + (pw.unknown ? `; ${pw.unknown} room${pw.unknown > 1 ? "s" : ""} with unknown power not counted` : ""),
     `${pw.use} / ${pw.make}` + (pw.make ? ` (${Math.round((100 * pw.use) / pw.make)}%)` : ""), pw.use > pw.make]);
@@ -1102,7 +1115,7 @@ function renderLayout() {
     const tr = el("tr", {}, el("td", { text: r.name }), typ, el("td", { text: `${r.w}x${r.h}` }), el("td", { class: "nowrap", text: `${r.x}, ${r.y}` }), el("td", { class: "nowrap" + (bad ? " bad" : ""), text: armor }));
     t.append(tr);
   });
-  l.bonus.forEach((r) => t.append(el("tr", {}, el("td", { text: r.name }), el("td", { text: "Bonus" }), el("td", { text: `${r.w}x${r.h}` }), el("td", { text: `${r.x}, ${r.y}` }), el("td"))));
+  l.bonus.forEach((r) => t.append(el("tr", {}, el("td", { text: r.name }), el("td", { class: "typecell" }, el("i", { style: `background:${bonusColor(r)}` }), el("span", { class: "tlabel", text: "Bonus" })), el("td", { text: `${r.w}x${r.h}` }), el("td", { text: `${r.x}, ${r.y}` }), el("td"))));
 }
 // how the result places its anti-teleport gates, in the top ships' terms (Top 100 page, Gate placement)
 function gateHabits(l) {
@@ -1141,7 +1154,8 @@ function download(name, text, type) {
 }
 function coordsText(l) {
   const lines = l.rooms.map((r) => `${r.name}${r.catLabel ? " [" + r.catLabel + "]" : ""} (${r.w}x${r.h}) -> ${r.x}, ${r.y}`);
-  l.bonus.forEach((r) => lines.push(`${r.name} (${r.w}x${r.h}) -> ${r.x}, ${r.y}`));
+  l.bonus.forEach((r) => lines.push(`${/\d+x\d+$/.test(r.name) ? r.name : `${r.name} (${r.w}x${r.h})`} -> ${r.x}, ${r.y}`));
+  if (l.bonus.length) { const n2 = l.bonus.filter(isBonus2x2).length; lines.push(`Bonus rooms: ${l.bonus.length - n2} 3x2, ${n2} 2x2`); }
   l.lifts.forEach(([x, y0, y1]) => lines.push(`Lift column x=${x}: y ${y0}-${y1}`));
   l.vents.forEach(([x, y]) => lines.push(`Vent (1x1) -> ${x}, ${y}`));
   lines.push(`Armor (${l.armor.length}): ` + l.armor.map(([x, y]) => `(${x},${y})`).join(" "));

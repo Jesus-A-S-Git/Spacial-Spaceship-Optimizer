@@ -113,6 +113,8 @@ details.sub > summary:hover { color: var(--text); }
 .grid2 label, .wrow label { font-size: var(--fs-sm); }
 .wgroup, .kindhead { margin: var(--s3) 0 6px; font: 400 12px/1.4 var(--font-pixel); text-transform: uppercase; letter-spacing: .06em; color: var(--accent); }
 label.inline { display: block; margin-top: 10px; font-size: var(--fs-sm); }
+label.inline.indent { margin-left: 22px; }
+label.inline:has(input:disabled) { opacity: .5; }
 #quickTime { max-width: 110px; }
 .rows .row { display: flex; gap: 6px; margin-bottom: 6px; align-items: center; }
 .rows .row input { min-width: 0; }

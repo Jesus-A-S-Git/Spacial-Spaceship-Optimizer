@@ -140,6 +140,11 @@ optimizer learned:
   from the hull edge to between two decks, where each tile protects two rooms; lifts are stretched with the deck),
   cut-off combat rooms are reconnected, and vents that do not help are removed. A vent passage only counts if it
   serves a combat room or a lift: a bedroom-to-bedroom vent is always removed.
+* **Close up empty space** (end of the final clean-up, `compact_polish`): rooms slide until they touch something,
+  rooms, decks or the stretch between two lifts fall toward a side, short floor gaps close and a lift may reach one
+  more deck. Only moves that raise the score and cut off no room are kept, and the result is kept only if it beats
+  the layout before this step. Most unused tiles left after it are 1-tile strips in the armor rows between decks,
+  which no room fits.
 * **Connect every combat room** (*Armor, lifts and vents*, on by default; optimizer `CONNECT_ALL`, section 14): after
   each search the optimizer adds the vent or lift, or makes the small move of a cut-off room, that reconnects the
   most cut-off combat rooms; when none helps, it closes a short gap in a floor row by sliding rooms sideways. This
@@ -208,6 +213,9 @@ than the baseline`, or `RESULT: REGRESSION` and exit status 1 when the mean scor
   A pure speed-up must give exactly the same numbers.
 - `--jobs 4` runs that many ships at once (one process each, same results as one at a time).
 - `--only 8,14` runs only those ranks (for looking into one ship).
+- Unused open tiles and the longest empty run are reported per ship and compared too. Top-100 ships fill their hull,
+  so the standard benchmark leaves only ~2.6 unused tiles per run; to measure layouts with spare space, set
+  `BENCH_DROP=6` (drop every 6th non-priority room) and `BENCH_BONUS=1` (bonus fillers on, as on the page).
 - Changes that are about speed (more search in the same time, as on the page) also need time mode: run the old
   engine (`BENCH_SRC=old_ship_layout_finder.py`) and the new one at the same time, each with half the cores, e.g.
   `--seconds 45 --rounds 2 --jobs 2`. `--rounds` runs like the page: rounds of `--seconds`, each continuing from
@@ -217,6 +225,38 @@ Resource space: only resource rooms may sit on `r` tiles (lifts, vents, armor an
 resource room never straddles `r` and ordinary tiles. When the hull has `r` tiles, every resource room on
 ordinary tiles costs `W_RES_OFF` (default 50), and the search, the starting layouts and the deck / top-100
 starts put resource rooms on `r` tiles first.
+
+## Bonus rooms (filler)
+
+After the search, *Fill leftover space with bonus rooms* (Advanced, on by default; `PLACE_BONUS_ROOMS`) fills
+leftover space with filler bonus rooms, in this order:
+
+1. **3x2** bonus rooms (`BONUS_SIZE`) wherever they fit without touching armor or a lift, then 3x2s that break up
+   empty rows longer than *Max empty run*.
+2. **2x2** bonus rooms (`BONUS_SIZE_2X2`, *Also place 2x2 bonus rooms*, `PLACE_BONUS_2X2`, on by default), the same
+   two passes, only in the space that is left where no 3x2 fits.
+
+Fillers never go on the corridor tiles crew need to reach every combat room, never on `r` tiles, and never on armor
+tiles (armor is placed first). 2x2s also stay off the empty tiles on crew's shortest routes from the first combat
+room, so a small filler never plugs the one gap crew walk through. On the page the 2x2s are a lighter green than the
+3x2s, and the stats, the coordinates table and the TXT / copy output give the count of each ("Bonus rooms: 12 3x2,
+3 2x2").
+
+Scoring: filler tiles are used space, so they are not counted in *Unused open tiles* (`W_EMPTY` each). On top of that,
+each filler room earns `W_BONUS_3X2` (default 10) or `W_BONUS_2X2` (default 5), shown under *Scoring weights > Space
+and zoning*. A 2x2 earns less than a 3x2 per room and per tile, and the per-room reward only counts when every combat
+room is reachable.
+
+The 2x2s and the per-room reward are **added to the finished layouts only** (`finalize(state, final=True)`: the page's
+results and the command line's printed layout). The search itself scores exactly as before (3x2 fillers, no per-room
+reward), so it finds the same layouts and cannot trade armor, reach or travel for filler credit. On the page, the
+**Score** shown above a layout and its stats include the 2x2s and the bonus reward. Layouts are still ranked by the
+search's own score (`score` in the layout JSON; the shown one is `final_score`).
+
+`tools/benchmark_top.py` runs with fillers off, like the real top ships it is compared with. With
+`--set PLACE_BONUS_ROOMS=1` the search runs with the 3x2 fillers. Its per-ship numbers are the search's scores and are
+judged without fillers, so the 2x2s never show there. To see them, finalize the saved best layouts with
+`final=True`. The driver also accepts `PLACE_BONUS_ROOMS` and `PLACE_BONUS_2X2` as settings.
 
 ## Ship vs ship (mock win rate)
 
