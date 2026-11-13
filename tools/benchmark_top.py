@@ -21,6 +21,8 @@ the changed engine is worse (lower mean score, less armor or more cut-off rooms 
 (--seed 1,2,3: every ship once per seed, less noise; --jobs 4: four ships at once, same results.)
 
 Also: BENCH_SRC=/path/to/other/ship_layout_finder.py runs another engine version with the same driver.
+Spare space (top ships fill their whole hull, so unused open tiles are rare): BENCH_DROP=6 leaves out every 6th
+non-priority room, BENCH_BONUS=1 places filler bonus rooms in the spare space (as the page does).
 """
 import argparse, json, os, statistics, sys, time
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -59,7 +61,9 @@ def shape(m, state):
             if not any(tiles.get(t, -1) >= m.NC and tiles[t] != r for t in ring):
                 nc_alone += 1
     pri = [info["touch"].get(r, 0) for r in m.PRIORITY_IDX]
-    return dict(score=score, vents=len(state["vents"]), vents_useless=info["vent_pen"], armor_sum=info["arm_sum"], empty=info["empty_unused"], corridor=info["corridor"], lifts=len({x for x, _, _ in state["lifts"]}), unreach=info["unreach"],
+    longest = max((mm.end() - mm.start() for row in g for mm in m._DOTS.finditer("".join(row))), default=0)
+    return dict(score=score, vents=len(state["vents"]), vents_useless=info["vent_pen"], armor_sum=info["arm_sum"], empty=info["empty_unused"], corridor=info["corridor"],
+                longest_run=longest, long_extra=info["long_extra"], lifts=len({x for x, _, _ in state["lifts"]}), unreach=info["unreach"],
                 travel=info["avg"], pattern=info.get("pattern", 0.0),
                 edge_pri=edge["priority"][0] / max(1, edge["priority"][1]),
                 edge_com=edge["combat"][0] / max(1, edge["combat"][1]),
@@ -105,7 +109,12 @@ def _bench_one(args, log=None):
     settings = dict(SITE, ARMOR_COUNT=len(ship.armor), VENT_COUNT=len(ship.vents))   # same armor and vents as the real ship
     if os.environ.get("BENCH_VENTS"):
         settings["VENT_COUNT"] = int(os.environ["BENCH_VENTS"])
+    drop = int(os.environ.get("BENCH_DROP", "0") or 0)
+    if drop > 1:                    # spare hull space (top ships fill their hull): leave out every drop-th non-priority room
+        ship.rooms = [r for i, r in enumerate(ship.rooms) if r["kind"] == "priority" or i % drop != drop - 1]
     cfg, rooms = A.ship_cfg(ship, an["patterns"], settings=settings)
+    if os.environ.get("BENCH_BONUS") == "1":                   # the page default: filler bonus rooms in spare space
+        cfg["place_bonus_rooms"] = True
     cfg["top50_priors"] = an.get("priors")
     m = web_driver.build_module(cfg, SRC)                       # judge: website defaults, original weights
     real_state = dict(pos=[(r["x"], r["y"]) for r in rooms], lifts=list(ship.lifts), vents=[])
@@ -159,14 +168,15 @@ def _bench_one(args, log=None):
         return None, lines
     # run_score: the best layout's score under the settings the search ran with (what the engine maximises)
     row = dict(rank=l["rank"], seed=seed, ship=l["ship_name"], rooms=m.NR, real=real, opt=opt,
-               run_score=best["layouts"][0]["score"], seconds=round(t_run, 1))
+               run_score=best["layouts"][0]["score"], seconds=round(t_run, 1), state=st)
     say(f"  #{l['rank']:>3}{'' if seed == 1 else f'/s{seed}'} {l['ship_name'][:26]:26} armor real {real['armor_sum']:>4.0f} opt {opt['armor_sum']:>4.0f}"
         f" | unreachable {real['unreach']}/{opt['unreach']} | lifts {real['lifts']}/{opt['lifts']}"
+        f" | unused {real['empty']}/{opt['empty']} (run {real['longest_run']}/{opt['longest_run']})"
         f" | score {row['run_score']:.1f} ({t_run:.0f}s)")
     return row, lines
 
 
-KEYS = ["vents", "vents_useless", "armor_sum", "armor_pri", "armor_float", "lifts", "unreach", "travel", "nc_grouped", "edge_nc", "edge_com", "edge_pri", "empty"]
+KEYS = ["vents", "vents_useless", "armor_sum", "armor_pri", "armor_float", "lifts", "unreach", "travel", "nc_grouped", "edge_nc", "edge_com", "edge_pri", "empty", "longest_run"]
 
 
 def summary(rows):
@@ -175,6 +185,8 @@ def summary(rows):
                 armor_at_least_real=sum(1 for r in rows if r["opt"]["armor_sum"] >= r["real"]["armor_sum"]),
                 mean_score=round(statistics.mean(r["run_score"] for r in rows), 2),
                 mean_armor=round(statistics.mean(r["opt"]["armor_sum"] for r in rows), 2),
+                mean_unused=round(statistics.mean(r["opt"]["empty"] for r in rows), 2),
+                mean_longest_run=round(statistics.mean(r["opt"]["longest_run"] for r in rows), 2),
                 total_unreach=sum(r["opt"]["unreach"] for r in rows),
                 seconds=round(sum(r.get("seconds", 0) for r in rows), 1))
 
@@ -192,14 +204,15 @@ def compare(results, base, tol):
         key = lambda r: (r["rank"], r.get("seed", 1))
         brows = {key(r): r for r in b.get("rows", [])}
         print(f"{c['name']}:")
-        print(f"  {'ship':32} {'score base':>11} {'score now':>10} {'diff':>8} | armor base/now | cut-off base/now")
+        print(f"  {'ship':32} {'score base':>11} {'score now':>10} {'diff':>8} | armor base/now | cut-off base/now | unused base/now | run base/now")
         for r in c.get("rows", []):
             o = brows.get(key(r))
             if not o:
                 continue
             d = r["run_score"] - o["run_score"]
             print(f"  #{r['rank']:>3}{'' if r.get('seed', 1) == 1 else '/s' + str(r['seed']):4} {r['ship'][:23]:23} {o['run_score']:>11.1f} {r['run_score']:>10.1f} {d:>+8.1f} |"
-                  f" {o['opt']['armor_sum']:>5.0f}/{r['opt']['armor_sum']:<5.0f}    | {o['opt']['unreach']}/{r['opt']['unreach']}")
+                  f" {o['opt']['armor_sum']:>5.0f}/{r['opt']['armor_sum']:<5.0f}    | {o['opt']['unreach']:>7}/{r['opt']['unreach']:<8} |"
+                  f" {o['opt'].get('empty', 0):>7}/{r['opt'].get('empty', 0):<7} | {o['opt'].get('longest_run', '-')}/{r['opt'].get('longest_run', '-')}")
         ranks = set(brows) & {key(r) for r in c.get("rows", [])}
         if not ranks:
             continue
@@ -214,6 +227,14 @@ def compare(results, base, tol):
         loss = sum(1 for n, o in zip(pick(c["rows"], lambda r: r["run_score"]), pick(b["rows"], lambda r: r["run_score"])) if n < o - 1e-6)
         print(f"  mean score {ms_b:.1f} -> {ms_n:.1f} ({ms_n - ms_b:+.1f}); better on {wins}, worse on {loss} of {len(ranks)} runs")
         print(f"  mean armor {ar_b:.1f} -> {ar_n:.1f}; cut-off pairs {un_b} -> {un_n}; time {b.get('seconds', 0):.0f}s -> {c.get('seconds', 0):.0f}s")
+        em_b = statistics.mean(pick(b["rows"], lambda r: r["opt"].get("empty", 0)))
+        em_n = statistics.mean(pick(c["rows"], lambda r: r["opt"].get("empty", 0)))
+        print(f"  mean unused open tiles {em_b:.2f} -> {em_n:.2f} ({em_n - em_b:+.2f})", end="")
+        if all("longest_run" in r["opt"] for r in b["rows"] + c["rows"]):
+            lr_b = statistics.mean(pick(b["rows"], lambda r: r["opt"]["longest_run"]))
+            lr_n = statistics.mean(pick(c["rows"], lambda r: r["opt"]["longest_run"]))
+            print(f"; mean longest empty run {lr_b:.2f} -> {lr_n:.2f}", end="")
+        print()
         slack = tol * max(1.0, abs(ms_b))
         if ms_n < ms_b - slack:
             bad.append(f"{c['name']}: mean score dropped {ms_b:.1f} -> {ms_n:.1f}")

@@ -2977,6 +2977,175 @@ def swap_polish(st, res, deadline=None, passes=3, rng=None):
     return cur, best
 
 
+def push_target(st, r, dx, dy, blocked=None):
+    """How far room r can slide straight in direction (dx, dy) over free tiles (no room, lift or vent in
+    the way, on the hull, resource space respected): the number of tiles, 0 if it cannot move at all."""
+    pos = st["pos"]
+    x, y = pos[r]
+    w, h = ROOMS[r][2], ROOMS[r][3]
+    if blocked is None:
+        blocked = set()
+        for q, (qx, qy) in enumerate(pos):
+            if q != r:
+                blocked.update(rect_tiles(qx, qy, ROOMS[q][2], ROOMS[q][3]))
+        for lx, y0, y1 in st["lifts"]:
+            blocked.update((lx, yy) for yy in range(y0, y1 + 1))
+        blocked.update(tuple(v) for v in st["vents"])
+    k = 0
+    while True:
+        nx, ny = x + (k + 1) * dx, y + (k + 1) * dy
+        if not rect_ok(nx, ny, w, h, r):
+            break
+        # only the leading edge enters new tiles
+        if dx:
+            edge = [(nx + (w - 1 if dx > 0 else 0), yy) for yy in range(ny, ny + h)]
+        else:
+            edge = [(xx, ny + (h - 1 if dy > 0 else 0)) for xx in range(nx, nx + w)]
+        if any(t in blocked for t in edge):
+            break
+        k += 1
+    return k
+
+
+def gravity(st, dx, dy, movable=None):
+    """Every room (of `movable`, default all) falls straight in direction (dx, dy) until it touches a room,
+    lift, vent or the hull, rooms nearest that side first. Lifts and vents stay put. Returns the new state
+    (lift ends trimmed) or None when nothing moved / the result is not legal."""
+    pos = list(st["pos"])
+    occ = {}
+    for q, (qx, qy) in enumerate(pos):
+        for t in rect_tiles(qx, qy, ROOMS[q][2], ROOMS[q][3]):
+            occ[t] = q
+    fixed = set()
+    for lx, y0, y1 in st["lifts"]:
+        fixed.update((lx, yy) for yy in range(y0, y1 + 1))
+    fixed.update(tuple(v) for v in st["vents"])
+    rooms = list(range(NR)) if movable is None else list(movable)
+    key = (lambda r: -pos[r][0] * dx) if dx else (lambda r: -pos[r][1] * dy)
+    moved = False
+    for r in sorted(rooms, key=key):
+        x, y = pos[r]
+        w, h = ROOMS[r][2], ROOMS[r][3]
+        k = 0
+        while True:
+            nx, ny = x + (k + 1) * dx, y + (k + 1) * dy
+            if not rect_ok(nx, ny, w, h, r):
+                break
+            if dx:
+                edge = [(nx + (w - 1 if dx > 0 else 0), yy) for yy in range(ny, ny + h)]
+            else:
+                edge = [(xx, ny + (h - 1 if dy > 0 else 0)) for xx in range(nx, nx + w)]
+            if any(t in fixed or occ.get(t, r) != r for t in edge):
+                break
+            k += 1
+        if k:
+            for t in rect_tiles(x, y, w, h):
+                del occ[t]
+            pos[r] = (x + k * dx, y + k * dy)
+            for t in rect_tiles(pos[r][0], pos[r][1], w, h):
+                occ[t] = r
+            moved = True
+    if not moved:
+        return None
+    cand = trim_lifts(dict(pos=pos, lifts=st["lifts"], vents=st["vents"]))
+    return cand if cand and occupancy(cand) is not None else None
+
+
+def gravity_cands(st):
+    """Compaction candidates: all rooms, one deck (floor row) or one column stretch between lifts falling
+    toward one side."""
+    pos = st["pos"]
+    out = []
+    floors = defaultdict(list)
+    for r in range(NR):
+        floors[pos[r][1] + ROOMS[r][3] - 1].append(r)
+    cols = sorted({x for x, _, _ in st["lifts"]})
+    cuts = [-1] + cols + [W]
+    spans = [(cuts[i] + 1, cuts[i + 1] - 1) for i in range(len(cuts) - 1) if cuts[i + 1] - cuts[i] > 2]
+    for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+        groups = [None]
+        if dx:
+            groups += [rs for rs in floors.values() if len(rs) > 1]
+        else:
+            groups += [[r for r in range(NR) if pos[r][0] >= a and pos[r][0] + ROOMS[r][2] - 1 <= b] for a, b in spans]
+        for g in groups:
+            if g is not None and not g:
+                continue
+            c = gravity(st, dx, dy, g)
+            if c is not None:
+                out.append(c)
+    return out
+
+
+def lift_reach_cands(st):
+    """Each lift made longer at one end, over free tiles, up to the next row where a floor lies beside it
+    (a lift end must sit beside a floor), so a lift reaches one more deck."""
+    occ = occupancy(dict(st, lifts=[]))
+    if occ is None:
+        return []
+    tiles, _, vents = occ
+    taken = set(tiles) | set(vents)
+    for x, y0, y1 in st["lifts"]:
+        taken.update((x, y) for y in range(y0, y1 + 1))
+    floor = floor_tiles(st["pos"])
+    out = []
+    for i, (x, y0, y1) in enumerate(st["lifts"]):
+        for d in (-1, 1):
+            y = y0 if d < 0 else y1
+            while True:
+                y += d
+                if not free_tile(x, y) or (x, y) in taken:
+                    break
+                if (x - 1, y) in floor or (x + 1, y) in floor:
+                    lifts = list(st["lifts"])
+                    lifts[i] = (x, y, y1) if d < 0 else (x, y0, y)
+                    out.append(dict(pos=st["pos"], lifts=lifts, vents=st["vents"]))
+                    break
+    return out
+
+
+def compact_polish(st, res, deadline=None, passes=2):
+    """Close up empty space: slide single rooms straight until they touch something (or one tile), and close
+    short gaps in floor rows (a room and what lies beyond it), keeping every move that scores better. Rooms
+    the search left with a strip of empty tiles around them move into place, so the spare space gathers in
+    blocks the filler rooms and armor can use."""
+    cur, best = st, res
+    for _ in range(passes):
+        improved = False
+        for r in range(NR):
+            for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                if deadline and time.time() > deadline:
+                    return cur, best
+                k = push_target(cur, r, dx, dy)
+                if not k:
+                    continue
+                x, y = cur["pos"][r]
+                top = None
+                for kk in sorted({k, 1}):
+                    pos = list(cur["pos"])
+                    pos[r] = (x + kk * dx, y + kk * dy)
+                    cand = trim_lifts(dict(pos=pos, lifts=cur["lifts"], vents=cur["vents"]))
+                    if cand is None or occupancy(cand) is None:
+                        continue
+                    rr = finalize(cand)
+                    if (rr and rr[0] > best[0] + 1e-6 and rr[2]["unreach"] <= best[2]["unreach"]
+                            and (top is None or rr[0] > top[1][0])):
+                        top = (cand, rr)
+                if top:
+                    cur, best = top
+                    improved = True
+        for cand in lift_reach_cands(cur) + gravity_cands(cur) + gap_slides(cur):
+            if deadline and time.time() > deadline:
+                return cur, best
+            rr = finalize(cand)
+            if rr and rr[0] > best[0] + 1e-6 and rr[2]["unreach"] <= best[2]["unreach"]:
+                cur, best, improved = cand, rr, True
+                break
+        if not improved:
+            break
+    return cur, best
+
+
 def final_touch(st, res, rng, deadline=None):
     """Clean-up for a finished layout: swap same-size rooms, slide decks/columns, reconnect combat rooms,
     drop unneeded vents."""
@@ -2991,7 +3160,17 @@ def final_touch(st, res, rng, deadline=None):
         st, res = repair_connections(st, res, rng, moves=True)
     if st["vents"]:
         st, res = prune_vents(st, res)
-    return st, res
+    # last: close up empty space (slide rooms until they touch, let rooms / decks fall together, close floor
+    # gaps, let lifts reach one more deck); only when that improves the layout, tidy up again after it
+    st2, res2 = compact_polish(st, res, deadline)
+    if res2 is not res:                  # (never more cut-off rooms than before, so no repair needed)
+        st2, res2 = band_polish(st2, res2, deadline)
+        st2, res2 = swap_polish(st2, res2, deadline, rng=rng)
+        if st2["vents"]:
+            st2, res2 = prune_vents(st2, res2)
+        if res2[0] <= res[0] or res2[2]["unreach"] > res[2]["unreach"]:
+            st2, res2 = st, res
+    return st2, res2
 
 
 def cut_off(state, want_rooms=False):

@@ -140,6 +140,11 @@ optimizer learned:
   from the hull edge to between two decks, where each tile protects two rooms; lifts are stretched with the deck),
   cut-off combat rooms are reconnected, and vents that do not help are removed. A vent passage only counts if it
   serves a combat room or a lift: a bedroom-to-bedroom vent is always removed.
+* **Close up empty space** (end of the final clean-up, `compact_polish`): rooms slide until they touch something,
+  rooms, decks or the stretch between two lifts fall toward a side, short floor gaps close and a lift may reach one
+  more deck. Only moves that raise the score and cut off no room are kept, and the result is kept only if it beats
+  the layout before this step. Most unused tiles left after it are 1-tile strips in the armor rows between decks,
+  which no room fits.
 * **Connect every combat room** (*Armor, lifts and vents*, on by default; optimizer `CONNECT_ALL`, section 14): after
   each search the optimizer adds the vent or lift, or makes the small move of a cut-off room, that reconnects the
   most cut-off combat rooms; when none helps, it closes a short gap in a floor row by sliding rooms sideways. This
@@ -208,6 +213,9 @@ than the baseline`, or `RESULT: REGRESSION` and exit status 1 when the mean scor
   A pure speed-up must give exactly the same numbers.
 - `--jobs 4` runs that many ships at once (one process each, same results as one at a time).
 - `--only 8,14` runs only those ranks (for looking into one ship).
+- Unused open tiles and the longest empty run are reported per ship and compared too. Top-100 ships fill their hull,
+  so the standard benchmark leaves only ~2.6 unused tiles per run; to measure layouts with spare space, set
+  `BENCH_DROP=6` (drop every 6th non-priority room) and `BENCH_BONUS=1` (bonus fillers on, as on the page).
 - Changes that are about speed (more search in the same time, as on the page) also need time mode: run the old
   engine (`BENCH_SRC=old_ship_layout_finder.py`) and the new one at the same time, each with half the cores, e.g.
   `--seconds 45 --rounds 2 --jobs 2`. `--rounds` runs like the page: rounds of `--seconds`, each continuing from
